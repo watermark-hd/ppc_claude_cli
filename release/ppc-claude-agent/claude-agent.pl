@@ -308,6 +308,16 @@ sub confirm {
 {
     my @HISTORY;
 
+    # デバッグ用: $ENV{CLAUDE_DEBUG_INPUT}にファイルパスを設定すると、
+    # read_line_interactiveが実際に受け取った生バイトを1行ずつ追記する。
+    # 実機でIME入力時に何が届いているか調べるための一時的な仕組み。
+    sub _debug_log {
+        return unless $ENV{CLAUDE_DEBUG_INPUT};
+        open(my $fh, '>>', $ENV{CLAUDE_DEBUG_INPUT}) or return;
+        print $fh @_;
+        close $fh;
+    }
+
     # UTF-8の先頭バイトからその文字が何バイトかを返す
     sub _utf8_char_len {
         my ($byte) = @_;
@@ -372,18 +382,22 @@ sub confirm {
         };
 
         print $prompt;
+        _debug_log("=== read_line_interactive start ===\n");
 
         my $result;
         RAW_LOOP: while (1) {
             my $ch;
             my $n = sysread(STDIN, $ch, 1);
             if (!defined $n || $n == 0) {
+                _debug_log("EOF\n");
                 $result = undef;  # EOF (Ctrl-D)
                 last RAW_LOOP;
             }
             my $b = ord($ch);
+            _debug_log(sprintf("byte: %02x (%s)\n", $b, ($b >= 0x20 && $b < 0x7f) ? chr($b) : ''));
 
             if ($b == 13 || $b == 10) {       # Enter
+                _debug_log(sprintf("-> ENTER, buf hex=%s\n", unpack('H*', $buf)));
                 print "\r\n";
                 $result = $buf;
                 last RAW_LOOP;
@@ -463,6 +477,7 @@ sub confirm {
                 while ($need > 0) {
                     my $n2 = sysread(STDIN, my $cont, 1);
                     last unless $n2;
+                    _debug_log(sprintf("  continuation byte: %02x\n", ord($cont)));
                     $char .= $cont;
                     $need--;
                 }
