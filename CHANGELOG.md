@@ -11,6 +11,19 @@ If that's you, thank you.
 
 ### 2026-08-22
 
+**Fixed:** Typing Japanese (or any multi-byte UTF-8) text at the prompt no
+longer fills the screen with garbled "◆" replacement characters.
+
+The line editor added to fix arrow-key handling read input one raw byte at a
+time and redrew the line after every single byte. A multi-byte UTF-8
+character (all Japanese text is 3 bytes per character) would briefly exist as
+an incomplete, invalid byte sequence between reads, and the redraw's UTF-8
+decode replaced that invalid partial sequence with a "◆" placeholder — once
+per byte, for every character typed. Found from a screenshot of an actual
+iBook session showing the terminal filling up with these placeholders while
+typing a Japanese prompt. Fixed by reading all the bytes of a character
+before inserting it into the buffer and redrawing.
+
 **Fixed:** Re-running the installer to upgrade no longer asks you to re-enter
 your Anthropic API key.
 
@@ -42,6 +55,19 @@ and full-width characters so Japanese input edits correctly too.
 使ってくれて、気づいてくれて、ありがとうございます。
 
 ### 2026-08-22
+
+**修正:** 日本語(マルチバイトのUTF-8文字)を入力すると、画面が文字化けした
+「◆」だらけになってしまう不具合。
+
+矢印キー対応のために追加した行編集機能は、入力を生バイト単位で1バイトずつ
+読み、そのたびに行を再描画していました。日本語などのマルチバイトUTF-8文字
+(日本語は1文字3バイト)は、全バイトが揃うまでの間、一時的に不完全で不正な
+バイト列になります。再描画時のUTF-8デコードがこの不正な部分列を「◆」
+(置換文字)に変換してしまうため、1文字打つたびに、揃うまでの間そのバイト数分
+「◆」が表示される作りになっていました。実際のiBookでのセッションの
+スクリーンショットで、日本語プロンプトを入力中に画面が「◆」で埋まっている
+のを見て発見しました。1文字分のバイトが揃ってからバッファに追加・再描画する
+ように修正しました。
 
 **修正:** インストーラーをアップグレードのために再実行しても、Anthropic APIキーの
 再入力を求められないようにしました。

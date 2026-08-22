@@ -447,8 +447,19 @@ sub confirm {
                 }
             }
             else {                               # 通常の文字(UTF-8の生バイト)
-                substr($buf, $pos, 0) = $ch;
-                $pos += 1;
+                # マルチバイト文字の途中(バイトが揃っていない状態)でredrawすると
+                # decode()が不完全な列を「�」に化けさせてしまうため、1文字分の
+                # バイトが揃うまで読んでからバッファに追加・再描画する。
+                my $need = _utf8_char_len($ch) - 1;
+                my $char = $ch;
+                while ($need > 0) {
+                    my $n2 = sysread(STDIN, my $cont, 1);
+                    last unless $n2;
+                    $char .= $cont;
+                    $need--;
+                }
+                substr($buf, $pos, 0) = $char;
+                $pos += length($char);
                 $redraw->();
             }
         }
