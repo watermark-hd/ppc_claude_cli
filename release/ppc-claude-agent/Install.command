@@ -48,7 +48,7 @@ if ! "$TOOLCHAIN_DIR/bin/curl" --version > /dev/null 2>&1; then
   echo "(build/ directory) in the full project."
   echo "その場合は README.md の build/ 以下の手順でソースからビルドしてください。"
   echo ""
-  printf "Press Enter to close this window / Enterキーで閉じます: "
+  printf "Press Enter to finish (this window may stay open; you can close it yourself) / Enterキーで完了します(ウィンドウは自動では閉じないことがあります。閉じて構いません): "
   read -r _
   exit 1
 fi
@@ -105,7 +105,7 @@ case "$overwrite" in
     if [ -z "$API_KEY" ]; then
       echo "Error: nothing was entered. Please run this installer again."
       echo "エラー: 何も入力されませんでした。もう一度インストーラーを実行してください。"
-      printf "Press Enter to close this window / Enterキーで閉じます: "
+      printf "Press Enter to finish (this window may stay open; you can close it yourself) / Enterキーで完了します(ウィンドウは自動では閉じないことがあります。閉じて構いません): "
       read -r _
       exit 1
     fi
@@ -118,7 +118,7 @@ case "$overwrite" in
         echo "説明文のプレースホルダー記号を誤って一緒に貼り付けていませんか?"
         echo "Paste just the key value, without the angle brackets, and run this again."
         echo "記号を含めず、キーの値だけを貼り付けて、もう一度実行してください。"
-        printf "Press Enter to close this window / Enterキーで閉じます: "
+        printf "Press Enter to finish (this window may stay open; you can close it yourself) / Enterキーで完了します(ウィンドウは自動では閉じないことがあります。閉じて構いません): "
         read -r _
         exit 1
         ;;
@@ -208,5 +208,5 @@ fi
 rm -f "$RESPONSE_FILE"
 
 echo ""
-printf "Press Enter to close this window / Enterキーで閉じます: "
+printf "Press Enter to finish (this window may stay open; you can close it yourself) / Enterキーで完了します(ウィンドウは自動では閉じないことがあります。閉じて構いません): "
 read -r _

@@ -11,6 +11,12 @@ If that's you, thank you.
 
 ### 2026-08-22
 
+**Fixed:** `Install.command` telling you to "Press Enter to close this
+window" even though pressing Enter doesn't actually close the Terminal
+window (that depends on your Terminal profile's "When the shell exits"
+setting). Reworded to "Press Enter to finish" so it no longer promises
+something it doesn't do.
+
 **Fixed:** Pressing Enter right after certain input could get silently
 swallowed instead of submitting the line — most visible as Enter "doing
 nothing" after typing Japanese, or two separate messages ending up
@@ -95,6 +101,11 @@ and full-width characters so Japanese input edits correctly too.
 使ってくれて、気づいてくれて、ありがとうございます。
 
 ### 2026-08-22
+
+**修正:** `Install.command`が「Enterキーで閉じます」と表示するのに、実際には
+Enterを押してもターミナルのウィンドウ自体は閉じない(閉じるかどうかは
+Terminalのプロファイル設定の「シェルの終了時」の項目次第)という不一致。
+「Enterキーで完了します」という、実態に合った表現に変更しました。
 
 **修正:** 特定の入力の直後にEnterを押しても、行が送信されずに黙って
 飲み込まれてしまうことがある不具合。日本語を入力した直後にEnterを押しても
