@@ -64,8 +64,12 @@ CACERT="$BUILD_DIR/src/cacert.pem"
 AGENT_SCRIPT="$BUILD_DIR/claude-agent.pl"
 
 if [ -f "$ENV_FILE" ]; then
-  printf "%s already exists. Overwrite? / 既に存在します。上書きしますか? [y/N] " "$ENV_FILE"
-  read -r overwrite
+  overwrite="n"
+  echo "Using existing API key from $ENV_FILE (this is normal when upgrading)."
+  echo "既存のAPIキー($ENV_FILE)をそのまま使います(バージョンアップ時は毎回これでOK)。"
+  echo "To set a different key, delete this file and run the installer again:"
+  echo "別のキーに変えたい場合は、このファイルを削除してからもう一度実行してください:"
+  echo "  rm $ENV_FILE"
 else
   overwrite="y"
 fi

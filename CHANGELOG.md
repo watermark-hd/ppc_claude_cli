@@ -11,6 +11,15 @@ If that's you, thank you.
 
 ### 2026-08-22
 
+**Fixed:** Re-running the installer to upgrade no longer asks you to re-enter
+your Anthropic API key.
+
+Both `Install.command` and `setup.sh` used to ask "Overwrite? [y/N]" every
+time `~/.claude-agent-env` already existed, and answering `y` (even by
+accident) meant pasting the key in again. Now, if the key file already
+exists, the installer just keeps it silently and prints a note on how to
+delete the file first if you actually want to set a different key.
+
 **Fixed:** Arrow keys no longer insert garbage characters instead of moving the cursor.
 
 `claude-agent.pl` was reading input with a plain `<STDIN>`, which has no concept
@@ -33,6 +42,15 @@ and full-width characters so Japanese input edits correctly too.
 使ってくれて、気づいてくれて、ありがとうございます。
 
 ### 2026-08-22
+
+**修正:** インストーラーをアップグレードのために再実行しても、Anthropic APIキーの
+再入力を求められないようにしました。
+
+`Install.command`と`setup.sh`はどちらも、`~/.claude-agent-env`が既に存在する
+場合に毎回「上書きしますか? [y/N]」と聞いており、うっかり`y`と答えるとキーの
+貼り付けをやり直す羽目になっていました。今はキーファイルが既にあれば黙って
+そのまま使い、別のキーに変えたい場合はファイルを削除してから実行し直す旨の
+案内だけを表示するようにしています。
 
 **修正:** 矢印キーを押すとカーソルが動かず、代わりに変な文字が入力されてしまう不具合。
 

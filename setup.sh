@@ -48,82 +48,86 @@ if [ ! -f "$AGENT_SCRIPT" ]; then
   exit 1
 fi
 
-echo "You need an Anthropic API key. If you don't have one yet:"
-echo "Anthropic APIキーが必要です。まだお持ちでない場合:"
-echo "  1. Open https://console.anthropic.com/ (NOT the same site as claude.ai)"
-echo "     https://console.anthropic.com/ を開く (claude.aiとは別サイトです)"
-echo "  2. Create an account / sign in"
-echo "     アカウントを作成 / ログイン"
-echo "  3. Go to 'API Keys' in the left menu and create a new key"
-echo "     左メニューの 'API Keys' から新しいキーを発行"
-echo "  4. Add a small amount of credit under 'Billing' (pay-as-you-go)"
-echo "     'Billing' で少額のクレジットをチャージ(従量課金)"
-echo ""
-echo "Note: this is NOT the password you use to log in to claude.ai."
-echo "注意: claude.aiにログインする時のパスワードとは別物です。"
-echo "The API key is a long string starting with 'sk-ant-api03-'."
-echo "'sk-ant-api03-' で始まる長い文字列がAPIキーです。"
-echo ""
-
 if [ -f "$ENV_FILE" ]; then
-  printf "%s already exists. Overwrite? / 既に存在します。上書きしますか? [y/N] " "$ENV_FILE"
-  read -r overwrite
-  case "$overwrite" in
-    y|Y) ;;
-    *) echo "Cancelled. / 中止しました。"; exit 0 ;;
-  esac
-fi
+  echo "Using existing API key from $ENV_FILE (this is normal when upgrading)."
+  echo "既存のAPIキー($ENV_FILE)をそのまま使います(バージョンアップ時は毎回これでOK)。"
+  echo "To set a different key, delete this file and run this again:"
+  echo "別のキーに変えたい場合は、このファイルを削除してからもう一度実行してください:"
+  echo "  rm $ENV_FILE"
+  echo ""
+else
+  echo "You need an Anthropic API key. If you don't have one yet:"
+  echo "Anthropic APIキーが必要です。まだお持ちでない場合:"
+  echo "  1. Open https://console.anthropic.com/ (NOT the same site as claude.ai)"
+  echo "     https://console.anthropic.com/ を開く (claude.aiとは別サイトです)"
+  echo "  2. Create an account / sign in"
+  echo "     アカウントを作成 / ログイン"
+  echo "  3. Go to 'API Keys' in the left menu and create a new key"
+  echo "     左メニューの 'API Keys' から新しいキーを発行"
+  echo "  4. Add a small amount of credit under 'Billing' (pay-as-you-go)"
+  echo "     'Billing' で少額のクレジットをチャージ(従量課金)"
+  echo ""
+  echo "Note: this is NOT the password you use to log in to claude.ai."
+  echo "注意: claude.aiにログインする時のパスワードとは別物です。"
+  echo "The API key is a long string starting with 'sk-ant-api03-'."
+  echo "'sk-ant-api03-' で始まる長い文字列がAPIキーです。"
+  echo ""
 
-printf "Paste your API key and press Enter (it will not be shown) / APIキーを貼り付けてEnter(画面には表示されません): "
-stty -echo 2>/dev/null || true
-read -r API_KEY
-stty echo 2>/dev/null || true
-echo ""
+  printf "Paste your API key and press Enter (it will not be shown) / APIキーを貼り付けてEnter(画面には表示されません): "
+  stty -echo 2>/dev/null || true
+  read -r API_KEY
+  stty echo 2>/dev/null || true
+  echo ""
 
-# trim leading/trailing whitespace / 前後の空白を除去
-API_KEY=$(echo "$API_KEY" | sed 's/^[ \t]*//;s/[ \t]*$//')
+  # trim leading/trailing whitespace / 前後の空白を除去
+  API_KEY=$(echo "$API_KEY" | sed 's/^[ \t]*//;s/[ \t]*$//')
 
-if [ -z "$API_KEY" ]; then
-  echo "Error: nothing was entered. Please run this again."
-  echo "エラー: 何も入力されませんでした。もう一度実行してください。"
-  exit 1
-fi
-
-case "$API_KEY" in
-  \<*|*\>)
-    echo "Error: found '<' or '>' in the input."
-    echo "エラー: '<' か '>' が含まれています。"
-    echo "Did you accidentally paste the placeholder brackets from an example?"
-    echo "説明文のプレースホルダー記号を誤って一緒に貼り付けていませんか?"
-    echo "Paste just the key value, without the angle brackets."
-    echo "記号を含めず、キーの値だけを貼り付けてください。"
+  if [ -z "$API_KEY" ]; then
+    echo "Error: nothing was entered. Please run this again."
+    echo "エラー: 何も入力されませんでした。もう一度実行してください。"
     exit 1
-    ;;
-esac
+  fi
 
-case "$API_KEY" in
-  sk-ant-api*) ;;
-  *)
-    echo "Warning: this doesn't start with 'sk-ant-api'."
-    echo "警告: 'sk-ant-api' で始まっていません。"
-    echo "Did you paste your claude.ai password or something else by mistake?"
-    echo "claude.aiのパスワードなど別のものを貼り付けていませんか?"
-    echo "Continuing anyway, but the connectivity check below may fail."
-    echo "このまま処理を続けますが、動作確認で失敗する可能性があります。"
-    ;;
-esac
+  case "$API_KEY" in
+    \<*|*\>)
+      echo "Error: found '<' or '>' in the input."
+      echo "エラー: '<' か '>' が含まれています。"
+      echo "Did you accidentally paste the placeholder brackets from an example?"
+      echo "説明文のプレースホルダー記号を誤って一緒に貼り付けていませんか?"
+      echo "Paste just the key value, without the angle brackets."
+      echo "記号を含めず、キーの値だけを貼り付けてください。"
+      exit 1
+      ;;
+  esac
 
-key_len=$(echo -n "$API_KEY" | wc -c | tr -d ' ')
-if [ "$key_len" -lt 50 ]; then
-  echo "Warning: the key is only ${key_len} characters. Was it cut off during copy?"
-  echo "警告: キーが ${key_len} 文字しかありません。コピーが途中で切れていませんか?"
+  case "$API_KEY" in
+    sk-ant-api*) ;;
+    *)
+      echo "Warning: this doesn't start with 'sk-ant-api'."
+      echo "警告: 'sk-ant-api' で始まっていません。"
+      echo "Did you paste your claude.ai password or something else by mistake?"
+      echo "claude.aiのパスワードなど別のものを貼り付けていませんか?"
+      echo "Continuing anyway, but the connectivity check below may fail."
+      echo "このまま処理を続けますが、動作確認で失敗する可能性があります。"
+      ;;
+  esac
+
+  key_len=$(echo -n "$API_KEY" | wc -c | tr -d ' ')
+  if [ "$key_len" -lt 50 ]; then
+    echo "Warning: the key is only ${key_len} characters. Was it cut off during copy?"
+    echo "警告: キーが ${key_len} 文字しかありません。コピーが途中で切れていませんか?"
+  fi
+
+  printf 'export ANTHROPIC_API_KEY=%s\n' "$API_KEY" > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  echo "Saved to $ENV_FILE (readable only by your account)"
+  echo "$ENV_FILE に保存しました(あなたのアカウントだけが読めるファイルです)"
+  echo ""
 fi
 
-printf 'export ANTHROPIC_API_KEY=%s\n' "$API_KEY" > "$ENV_FILE"
-chmod 600 "$ENV_FILE"
-echo "Saved to $ENV_FILE (readable only by your account)"
-echo "$ENV_FILE に保存しました(あなたのアカウントだけが読めるファイルです)"
-echo ""
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+API_KEY="$ANTHROPIC_API_KEY"
 
 # --- install the claude command / claude コマンドの設置 ---
 mkdir -p "$BIN_DIR"
