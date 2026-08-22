@@ -348,7 +348,10 @@ sub confirm {
 
         my $orig_stty = `stty -g`;
         chomp $orig_stty;
-        system('stty', 'raw', '-echo');
+        # -opostが無いと、環境によっては出力後処理(特にocrnl)が有効なままで
+        # 再描画に使う"\r"が改行として扱われ、行を上書きするはずが毎回新しい
+        # 行を作ってしまう(結果、入力するたびにどんどん改行されていく)。
+        system('stty', 'raw', '-echo', '-opost');
 
         my $buf = '';                    # 生バイト列
         my $pos = 0;                     # カーソル位置(バイト単位、常に文字境界)

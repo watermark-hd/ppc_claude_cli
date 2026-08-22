@@ -11,6 +11,20 @@ If that's you, thank you.
 
 ### 2026-08-22
 
+**Fixed:** Typing at the prompt (any character, not just Japanese) no longer
+pushes the terminal down one new line per keystroke instead of editing in
+place.
+
+The line editor redraws the current line with `"\r\x1b[K"` (return to column
+0, erase to end of line) after every keystroke. `stty raw -echo` disables
+input processing, but on some systems output post-processing (`opost`) is
+left on, and if `ocrnl` is part of that, every `\r` we print gets turned into
+a newline instead of actually returning to column 0 — so each redraw lands on
+a fresh line instead of overwriting the one before it. Found from a real
+iBook session where even plain ASCII input scrolled a new line per
+keystroke, which ruled out the multi-byte decode fix below as the sole cause.
+Fixed by explicitly disabling `opost` alongside `raw -echo`.
+
 **Fixed:** Typing Japanese (or any multi-byte UTF-8) text at the prompt no
 longer fills the screen with garbled "◆" replacement characters.
 
@@ -55,6 +69,18 @@ and full-width characters so Japanese input edits correctly too.
 使ってくれて、気づいてくれて、ありがとうございます。
 
 ### 2026-08-22
+
+**修正:** プロンプトで何か入力するたびに(日本語に限らず)、その場で編集されず
+1キーごとに新しい行へどんどん改行されていってしまう不具合。
+
+行編集機能は、1キー入力するたびに`"\r\x1b[K"`(先頭に戻ってその行を消す)で
+現在行を再描画しています。`stty raw -echo`は入力側の処理を無効にしますが、
+環境によっては出力側の後処理(`opost`)が有効なままのことがあり、その中に
+`ocrnl`が含まれていると、出力する`\r`が改行として扱われてしまい、本来同じ
+行を上書きするはずが毎回新しい行に描画されてしまいます。実際のiBookで
+半角英数字を打っただけでも1文字ごとに改行されていくのを確認し、これによって
+下記のマルチバイトデコードの修正だけが原因ではないと判明しました。
+`raw -echo`と合わせて`opost`も明示的に無効化することで修正しました。
 
 **修正:** 日本語(マルチバイトのUTF-8文字)を入力すると、画面が文字化けした
 「◆」だらけになってしまう不具合。
