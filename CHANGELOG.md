@@ -15,15 +15,22 @@ If that's you, thank you.
 pushes the terminal down one new line per keystroke instead of editing in
 place.
 
-The line editor redraws the current line with `"\r\x1b[K"` (return to column
-0, erase to end of line) after every keystroke. `stty raw -echo` disables
-input processing, but on some systems output post-processing (`opost`) is
-left on, and if `ocrnl` is part of that, every `\r` we print gets turned into
-a newline instead of actually returning to column 0 — so each redraw lands on
-a fresh line instead of overwriting the one before it. Found from a real
-iBook session where even plain ASCII input scrolled a new line per
-keystroke, which ruled out the multi-byte decode fix below as the sole cause.
-Fixed by explicitly disabling `opost` alongside `raw -echo`.
+The line editor's redraw closure reprinted the *entire* prompt string on
+every keystroke to redraw the line — and that prompt string is
+`"\nご用件をどうぞ> "`, with a **literal leading newline** baked in (it's meant
+to print once, to leave a blank line before the prompt). Redrawing it after
+every single character sent that newline to the terminal again each time,
+so the "line" being edited kept advancing instead of being overwritten in
+place — confirmed with a pty test: redraw count scaled exactly 1:1 with
+characters typed (20 characters in → 20 extra newlines out) regardless of
+whether the characters were ASCII or Japanese, which is what ruled out the
+UTF-8 decode fix below as the sole cause. An initial attempt at this fix
+suspected the terminal's output post-processing (`opost`/`ocrnl` turning an
+outgoing `\r` into a newline) and disabled `opost`, but that changed nothing
+on real hardware — the actual bug was this project's own code re-sending the
+prompt's leading newline on every redraw. Fixed by stripping the leading
+newline from the prompt text used for per-keystroke redraws, so only the
+very first print of the prompt includes it.
 
 **Fixed:** Typing Japanese (or any multi-byte UTF-8) text at the prompt no
 longer fills the screen with garbled "◆" replacement characters.
@@ -73,14 +80,22 @@ and full-width characters so Japanese input edits correctly too.
 **修正:** プロンプトで何か入力するたびに(日本語に限らず)、その場で編集されず
 1キーごとに新しい行へどんどん改行されていってしまう不具合。
 
-行編集機能は、1キー入力するたびに`"\r\x1b[K"`(先頭に戻ってその行を消す)で
-現在行を再描画しています。`stty raw -echo`は入力側の処理を無効にしますが、
-環境によっては出力側の後処理(`opost`)が有効なままのことがあり、その中に
-`ocrnl`が含まれていると、出力する`\r`が改行として扱われてしまい、本来同じ
-行を上書きするはずが毎回新しい行に描画されてしまいます。実際のiBookで
-半角英数字を打っただけでも1文字ごとに改行されていくのを確認し、これによって
-下記のマルチバイトデコードの修正だけが原因ではないと判明しました。
-`raw -echo`と合わせて`opost`も明示的に無効化することで修正しました。
+行編集機能の再描画処理は、1キー入力するたびにプロンプト文字列を**まるごと**
+再出力して行を描き直していました。ところがそのプロンプト文字列は
+`"\nご用件をどうぞ> "`と、**先頭に改行文字を含んで**いました(プロンプトの前に
+空行を1つ入れるための改行で、本来は最初の1回だけ出せば良いもの)。これを
+キー入力のたびに毎回再出力していたため、1文字打つごとに本物の改行が
+ターミナルに送られ続け、編集中の行がその場で上書きされず、どんどん次の行に
+進んでいってしまっていました。ptyを使ったテストで、再描画のたびに送られる
+改行の数が入力した文字数と正確に1対1で比例すること(20文字入力→改行20個
+増加)を確認して原因を特定しました。しかも英数字でも日本語でも同じように
+起きることから、下記のマルチバイトデコードの修正だけが原因ではないと
+判明しました。最初はターミナルの出力後処理(`opost`/`ocrnl`が出力の`\r`を
+改行に変換してしまう)を疑って`opost`を無効化しましたが、実機で試しても
+何も変わらず、実際の原因はこのプロジェクト自身のコードがプロンプトの
+先頭改行を再描画のたびに送り直していたことでした。再描画に使うプロンプト
+文字列から先頭の改行を取り除き、最初の1回の表示でだけ改行を出すように
+修正しました。
 
 **修正:** 日本語(マルチバイトのUTF-8文字)を入力すると、画面が文字化けした
 「◆」だらけになってしまう不具合。

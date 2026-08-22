@@ -358,10 +358,15 @@ sub confirm {
         my $hist_idx = scalar(@HISTORY); # 履歴カーソル(配列末尾 = 新規入力中)
         my $saved_buf = '';              # 履歴を辿る前の入力を退避しておく
 
+        # $promptの先頭改行(例: "\nご用件をどうぞ> ")は最初の表示でだけ使う。
+        # 再描画のたびにこれをそのまま含めて出すと、キー入力するたびに
+        # 改行が挿入され続けて新しい行がどんどん増えてしまう。
+        (my $redraw_prompt = $prompt) =~ s/^\n+//;
+
         my $redraw = sub {
             # $bufは生バイトのUTF-8。STDOUTには:encoding(UTF-8)層が付いているので
             # 一度Perl文字列にデコードしてから渡さないと二重エンコードで文字化けする。
-            print "\r\x1b[K", $prompt, decode('UTF-8', $buf, FB_DEFAULT);
+            print "\r\x1b[K", $redraw_prompt, decode('UTF-8', $buf, FB_DEFAULT);
             my $w = _display_width(substr($buf, $pos));
             print "\x1b[${w}D" if $w > 0;
         };
