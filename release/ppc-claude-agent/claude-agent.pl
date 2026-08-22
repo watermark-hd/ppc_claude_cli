@@ -329,11 +329,10 @@ sub confirm {
         return 1;  # 不正なバイト列は1バイトずつ進める
     }
 
-    # 与えられたUTF-8バイト列の、ターミナル上での表示幅(半角=1/全角=2)を返す
-    sub _display_width {
-        my ($bytes) = @_;
-        return 0 if $bytes eq '';
-        my $text = decode('UTF-8', $bytes, FB_DEFAULT);
+    # デコード済みのPerl文字列を受け取り、ターミナル上での表示幅
+    # (半角=1/全角=2)を返す
+    sub _display_width_chars {
+        my ($text) = @_;
         my $w = 0;
         for my $ch (split //, $text) {
             my $cp = ord($ch);
@@ -349,6 +348,33 @@ sub confirm {
         return $w;
     }
 
+    # 与えられたUTF-8バイト列の、ターミナル上での表示幅を返す
+    sub _display_width {
+        my ($bytes) = @_;
+        return 0 if $bytes eq '';
+        return _display_width_chars(decode('UTF-8', $bytes, FB_DEFAULT));
+    }
+
+    # ターミナルの桁数を返す(取得できなければ80にフォールバック)
+    sub _term_width {
+        my $wh = `stty size 2>/dev/null`;
+        return $1 if $wh =~ /^\s*\d+\s+(\d+)\s*$/;
+        return 80;
+    }
+
+    # 表示幅$w(セル数)ぶん文字を描画した直後にカーソルが位置する
+    # (0始まりの行, 0始まりの列)を返す。ターミナルの折り返しは、行末に
+    # 達しても次の文字が来るまで改行しない"遅延ラップ"仕様のため、
+    # ちょうど桁数の倍数で折り返る場合はその行の最終列に留まる。
+    sub _pos_rc {
+        my ($w, $cols) = @_;
+        return (0, 0) if $w <= 0 || $cols <= 0;
+        my $row = int(($w - 1) / $cols);
+        my $col = $w % $cols;
+        $col = $cols - 1 if $col == 0;  # 遅延ラップ: ちょうど桁数の倍数のときは行末に留まる
+        return ($row, $col);
+    }
+
     # プロンプトを表示しつつ1行を対話的に読み込む。矢印キー・Backspace・
     # (use_historyが真なら)↑↓での履歴呼び出しに対応する。
     # 戻り値: 入力された行(生バイト、改行なし)。Ctrl-DでのEOFはundef。
@@ -358,6 +384,7 @@ sub confirm {
 
         my $orig_stty = `stty -g`;
         chomp $orig_stty;
+        my $term_cols = _term_width();
         # -opostが無いと、環境によっては出力後処理(特にocrnl)が有効なままで
         # 再描画に使う"\r"が改行として扱われ、行を上書きするはずが毎回新しい
         # 行を作ってしまう(結果、入力するたびにどんどん改行されていく)。
@@ -373,12 +400,34 @@ sub confirm {
         # 改行が挿入され続けて新しい行がどんどん増えてしまう。
         (my $redraw_prompt = $prompt) =~ s/^\n+//;
 
+        # redraw_promptだけを表示した状態(bufが空)で何行分の表示になるかを初期値とする。
+        my $rows_used = (_pos_rc(_display_width_chars($redraw_prompt), $term_cols))[0] + 1;
+
         my $redraw = sub {
             # $bufは生バイトのUTF-8。STDOUTには:encoding(UTF-8)層が付いているので
             # 一度Perl文字列にデコードしてから渡さないと二重エンコードで文字化けする。
-            print "\r\x1b[K", $redraw_prompt, decode('UTF-8', $buf, FB_DEFAULT);
-            my $w = _display_width(substr($buf, $pos));
-            print "\x1b[${w}D" if $w > 0;
+            my $text   = decode('UTF-8', $buf, FB_DEFAULT);
+            my $before = decode('UTF-8', substr($buf, 0, $pos), FB_DEFAULT);
+            my $full_text   = $redraw_prompt . $text;
+            my $full_width  = _display_width_chars($full_text);
+            my $cursor_width = _display_width_chars($redraw_prompt . $before);
+
+            # 前回の再描画で使った行数ぶんカーソルを先頭行まで戻し、そこから
+            # 画面末尾までを丸ごとクリアする。折り返した行が複数あっても、
+            # 最終行だけをクリアする"\r\x1b[K"では前の行が消えずに残って
+            # しまい、入力するたびに同じ文字列が積み重なって表示される
+            # バグの原因になっていた。
+            print "\x1b[" . ($rows_used - 1) . "A" if $rows_used > 1;
+            print "\r\x1b[0J", $full_text;
+
+            my $end_row = (_pos_rc($full_width, $term_cols))[0];
+            $rows_used = $end_row + 1;
+
+            if ($cursor_width < $full_width) {
+                my ($cur_row, $cur_col) = _pos_rc($cursor_width, $term_cols);
+                print "\x1b[" . ($end_row - $cur_row) . "A" if $end_row > $cur_row;
+                print "\x1b[" . ($cur_col + 1) . "G";
+            }
         };
 
         print $prompt;
