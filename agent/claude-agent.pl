@@ -291,8 +291,175 @@ my @TOOLS = (
 sub confirm {
     my ($msg) = @_;
     print "\n[確認] $msg\n実行しますか? [y/N] ";
-    my $ans = <STDIN>;
+    my $ans = read_line_interactive('', 0);
     return defined($ans) && $ans =~ /^y/i;
+}
+
+# ------------------------------------------------------------------
+# 行編集(矢印キー対応の簡易readline)
+#
+# 標準の <STDIN> はカーソル移動機能を持たないため、矢印キーを押すと
+# ターミナルが送る生のエスケープシーケンス(ESC [ C など)がそのまま
+# 文字として画面に出てしまう。これを避けるため、stty で端末をraw
+# モードにし、1バイトずつ読みながら簡易的な行編集(←→移動、
+# Backspace、↑↓での履歴呼び出し)を自前で実装する。
+# 外部CPANモジュール(Term::ReadLineなど)には依存しない。
+# ------------------------------------------------------------------
+{
+    my @HISTORY;
+
+    # UTF-8の先頭バイトからその文字が何バイトかを返す
+    sub _utf8_char_len {
+        my ($byte) = @_;
+        my $b = ord($byte);
+        return 1 if $b < 0x80;
+        return 2 if ($b & 0xE0) == 0xC0;
+        return 3 if ($b & 0xF0) == 0xE0;
+        return 4 if ($b & 0xF8) == 0xF0;
+        return 1;  # 不正なバイト列は1バイトずつ進める
+    }
+
+    # 与えられたUTF-8バイト列の、ターミナル上での表示幅(半角=1/全角=2)を返す
+    sub _display_width {
+        my ($bytes) = @_;
+        return 0 if $bytes eq '';
+        my $text = decode('UTF-8', $bytes, FB_DEFAULT);
+        my $w = 0;
+        for my $ch (split //, $text) {
+            my $cp = ord($ch);
+            $w += (
+                ($cp >= 0x1100 && $cp <= 0x115F) ||
+                ($cp >= 0x2E80 && $cp <= 0xA4CF) ||
+                ($cp >= 0xAC00 && $cp <= 0xD7A3) ||
+                ($cp >= 0xF900 && $cp <= 0xFAFF) ||
+                ($cp >= 0xFF00 && $cp <= 0xFF60) ||
+                ($cp >= 0xFFE0 && $cp <= 0xFFE6)
+            ) ? 2 : 1;
+        }
+        return $w;
+    }
+
+    # プロンプトを表示しつつ1行を対話的に読み込む。矢印キー・Backspace・
+    # (use_historyが真なら)↑↓での履歴呼び出しに対応する。
+    # 戻り値: 入力された行(生バイト、改行なし)。Ctrl-DでのEOFはundef。
+    sub read_line_interactive {
+        my ($prompt, $use_history) = @_;
+        $use_history = 1 unless defined $use_history;
+
+        my $orig_stty = `stty -g`;
+        chomp $orig_stty;
+        system('stty', 'raw', '-echo');
+
+        my $buf = '';                    # 生バイト列
+        my $pos = 0;                     # カーソル位置(バイト単位、常に文字境界)
+        my $hist_idx = scalar(@HISTORY); # 履歴カーソル(配列末尾 = 新規入力中)
+        my $saved_buf = '';              # 履歴を辿る前の入力を退避しておく
+
+        my $redraw = sub {
+            # $bufは生バイトのUTF-8。STDOUTには:encoding(UTF-8)層が付いているので
+            # 一度Perl文字列にデコードしてから渡さないと二重エンコードで文字化けする。
+            print "\r\x1b[K", $prompt, decode('UTF-8', $buf, FB_DEFAULT);
+            my $w = _display_width(substr($buf, $pos));
+            print "\x1b[${w}D" if $w > 0;
+        };
+
+        print $prompt;
+
+        my $result;
+        RAW_LOOP: while (1) {
+            my $ch;
+            my $n = sysread(STDIN, $ch, 1);
+            if (!defined $n || $n == 0) {
+                $result = undef;  # EOF (Ctrl-D)
+                last RAW_LOOP;
+            }
+            my $b = ord($ch);
+
+            if ($b == 13 || $b == 10) {       # Enter
+                print "\r\n";
+                $result = $buf;
+                last RAW_LOOP;
+            }
+            elsif ($b == 3) {                  # Ctrl-C: 行をキャンセルして空行扱い
+                print "\r\n";
+                $result = '';
+                last RAW_LOOP;
+            }
+            elsif ($b == 4) {                  # Ctrl-D: 空行ならEOF
+                if ($buf eq '') {
+                    $result = undef;
+                    last RAW_LOOP;
+                }
+            }
+            elsif ($b == 127 || $b == 8) {      # Backspace
+                if ($pos > 0) {
+                    my $start = $pos - 1;
+                    $start-- while $start > 0 && (ord(substr($buf, $start, 1)) & 0xC0) == 0x80;
+                    substr($buf, $start, $pos - $start, '');
+                    $pos = $start;
+                    $redraw->();
+                }
+            }
+            elsif ($b == 27) {                  # ESC: カーソルキーなど
+                my $n2 = sysread(STDIN, my $c2, 1);
+                next RAW_LOOP unless $n2;
+                if ($c2 eq '[') {
+                    my $n3 = sysread(STDIN, my $c3, 1);
+                    next RAW_LOOP unless $n3;
+                    if ($c3 eq 'C') {            # →
+                        if ($pos < length($buf)) {
+                            $pos += _utf8_char_len(substr($buf, $pos, 1));
+                            $redraw->();
+                        }
+                    }
+                    elsif ($c3 eq 'D') {         # ←
+                        if ($pos > 0) {
+                            my $start = $pos - 1;
+                            $start-- while $start > 0 && (ord(substr($buf, $start, 1)) & 0xC0) == 0x80;
+                            $pos = $start;
+                            $redraw->();
+                        }
+                    }
+                    elsif ($use_history && $c3 eq 'A') {  # ↑ 履歴を遡る
+                        if ($hist_idx > 0) {
+                            $saved_buf = $buf if $hist_idx == @HISTORY;
+                            $hist_idx--;
+                            $buf = $HISTORY[$hist_idx];
+                            $pos = length($buf);
+                            $redraw->();
+                        }
+                    }
+                    elsif ($use_history && $c3 eq 'B') {  # ↓ 履歴を進める
+                        if ($hist_idx < @HISTORY) {
+                            $hist_idx++;
+                            $buf = ($hist_idx == @HISTORY) ? $saved_buf : $HISTORY[$hist_idx];
+                            $pos = length($buf);
+                            $redraw->();
+                        }
+                    }
+                    elsif ($c3 eq '3') {         # Delete キー (ESC [ 3 ~)
+                        my $n4 = sysread(STDIN, my $c4, 1);
+                        if ($n4 && $pos < length($buf)) {
+                            substr($buf, $pos, _utf8_char_len(substr($buf, $pos, 1)), '');
+                            $redraw->();
+                        }
+                    }
+                }
+            }
+            else {                               # 通常の文字(UTF-8の生バイト)
+                substr($buf, $pos, 0) = $ch;
+                $pos += 1;
+                $redraw->();
+            }
+        }
+
+        system('stty', $orig_stty) if defined $orig_stty && $orig_stty ne '';
+
+        if ($use_history && defined $result && $result ne '') {
+            push @HISTORY, $result;
+        }
+        return $result;
+    }
 }
 
 sub run_tool {
@@ -345,10 +512,8 @@ print "=== iBook G4 Claude Agent ===\n";
 print "こんにちは。(終了は 'exit' または Ctrl-D)\n";
 
 while (1) {
-    print "\nご用件をどうぞ> ";
-    my $input = <STDIN>;
+    my $input = read_line_interactive("\nご用件をどうぞ> ");
     last unless defined $input;
-    chomp $input;
     # 行全体(生バイト)が揃ってから、まとめてUTF-8デコードする
     $input = decode('UTF-8', $input, FB_DEFAULT);
     next if $input eq '';
