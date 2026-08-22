@@ -384,11 +384,21 @@ sub confirm {
         print $prompt;
         _debug_log("=== read_line_interactive start ===\n");
 
-        my $result;
-        RAW_LOOP: while (1) {
+        # 誤って先読みしてしまったバイトを次のループへ戻すためのプッシュバック
+        # キュー。マルチバイト文字の続きだと思って読んだバイトが実際には
+        # continuationバイトの形式(10xxxxxx)でなかった場合に使う。
+        my @pending;
+        my $read_byte = sub {
+            return shift @pending if @pending;
             my $ch;
             my $n = sysread(STDIN, $ch, 1);
-            if (!defined $n || $n == 0) {
+            return (defined $n && $n > 0) ? $ch : undef;
+        };
+
+        my $result;
+        RAW_LOOP: while (1) {
+            my $ch = $read_byte->();
+            if (!defined $ch) {
                 _debug_log("EOF\n");
                 $result = undef;  # EOF (Ctrl-D)
                 last RAW_LOOP;
@@ -423,11 +433,11 @@ sub confirm {
                 }
             }
             elsif ($b == 27) {                  # ESC: カーソルキーなど
-                my $n2 = sysread(STDIN, my $c2, 1);
-                next RAW_LOOP unless $n2;
+                my $c2 = $read_byte->();
+                next RAW_LOOP unless defined $c2;
                 if ($c2 eq '[') {
-                    my $n3 = sysread(STDIN, my $c3, 1);
-                    next RAW_LOOP unless $n3;
+                    my $c3 = $read_byte->();
+                    next RAW_LOOP unless defined $c3;
                     if ($c3 eq 'C') {            # →
                         if ($pos < length($buf)) {
                             $pos += _utf8_char_len(substr($buf, $pos, 1));
@@ -460,8 +470,8 @@ sub confirm {
                         }
                     }
                     elsif ($c3 eq '3') {         # Delete キー (ESC [ 3 ~)
-                        my $n4 = sysread(STDIN, my $c4, 1);
-                        if ($n4 && $pos < length($buf)) {
+                        my $c4 = $read_byte->();
+                        if (defined $c4 && $pos < length($buf)) {
                             substr($buf, $pos, _utf8_char_len(substr($buf, $pos, 1)), '');
                             $redraw->();
                         }
@@ -472,12 +482,20 @@ sub confirm {
                 # マルチバイト文字の途中(バイトが揃っていない状態)でredrawすると
                 # decode()が不完全な列を「�」に化けさせてしまうため、1文字分の
                 # バイトが揃うまで読んでからバッファに追加・再描画する。
+                # ただし、続くバイトが本当にUTF-8のcontinuationバイト(10xxxxxx)
+                # でなければ、それは別の文字/キーの先頭バイトなので読み戻す
+                # (でないと、本来の入力を誤って飲み込んでしまい、以降の入力が
+                # 効かなくなってしまう)。
                 my $need = _utf8_char_len($ch) - 1;
                 my $char = $ch;
                 while ($need > 0) {
-                    my $n2 = sysread(STDIN, my $cont, 1);
-                    last unless $n2;
+                    my $cont = $read_byte->();
+                    last unless defined $cont;
                     _debug_log(sprintf("  continuation byte: %02x\n", ord($cont)));
+                    if ((ord($cont) & 0xC0) != 0x80) {
+                        unshift @pending, $cont;
+                        last;
+                    }
                     $char .= $cont;
                     $need--;
                 }

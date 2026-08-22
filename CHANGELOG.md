@@ -11,6 +11,25 @@ If that's you, thank you.
 
 ### 2026-08-22
 
+**Fixed:** Pressing Enter right after certain input could get silently
+swallowed instead of submitting the line — most visible as Enter "doing
+nothing" after typing Japanese, or two separate messages ending up
+concatenated into one.
+
+The multi-byte assembly added for the "◆" fix below reads N more bytes after
+a lead byte, trusting that a multi-byte UTF-8 lead byte is always followed by
+real continuation bytes, without checking that they actually look like
+continuation bytes (`10xxxxxx`). On the real iBook, some byte in the actual
+input stream apparently isn't valid UTF-8 the way this code expected, so
+whatever came right after it — including a literal Enter keypress — got
+consumed as if it were part of that character instead of being handled as
+its own keystroke. Reproduced exactly with a pty test: sending a fake 3-byte
+lead byte followed by Enter, the old code swallowed the Enter entirely and
+only reacted on a *second* Enter, having merged the first one into the
+buffer as raw bytes. Fixed by validating each continuation byte and pushing
+it back to be read again as its own keystroke when it isn't one — so Enter
+(or any other key) can no longer disappear into a bad assembly.
+
 **Fixed:** Typing at the prompt (any character, not just Japanese) no longer
 pushes the terminal down one new line per keystroke instead of editing in
 place.
@@ -77,8 +96,25 @@ and full-width characters so Japanese input edits correctly too.
 
 ### 2026-08-22
 
-**修正:** プロンプトで何か入力するたびに(日本語に限らず)、その場で編集されず
-1キーごとに新しい行へどんどん改行されていってしまう不具合。
+**修正:** 特定の入力の直後にEnterを押しても、行が送信されずに黙って
+飲み込まれてしまうことがある不具合。日本語を入力した直後にEnterを押しても
+「何も起きない」ように見えたり、本来別々に送るはずだった2つのメッセージが
+1つに繋がって送信されてしまったりする形で現れていました。
+
+下記の「◆」化け修正で追加した、マルチバイト文字の続きバイトを読み込む処理は、
+マルチバイトUTF-8の先頭バイトの後には必ず本物のcontinuationバイト
+(`10xxxxxx`形式)が続くと決めつけて、その形式かどうかを確認せずにN バイト
+読み込んでいました。実機では、実際の入力ストリームのどこかにこのコードが
+想定していた形のUTF-8ではないバイトが混ざっているらしく、その直後に来た
+もの――**Enterキーの押下も含めて**――が、本来の1回のキー入力としてではなく、
+その(偽の)マルチバイト文字の一部として飲み込まれてしまっていました。pty
+テストで正確に再現できました: 偽の3バイト文字の先頭バイトの直後にEnterを
+送ると、旧コードはそのEnterを丸ごと飲み込んでしまい、次にもう一度Enterを
+送って初めて反応し、最初のEnterは生バイトとしてバッファに混ざったまま
+残っていました。続きバイトが本当にcontinuationバイトの形式かどうかを検証し、
+そうでなければ読み戻して改めて1つのキー入力として処理し直すように修正した
+ことで、Enter(に限らずどんなキーでも)が不正なバイト組み立ての中に消えて
+しまうことがないようにしました。
 
 行編集機能の再描画処理は、1キー入力するたびにプロンプト文字列を**まるごと**
 再出力して行を描き直していました。ところがそのプロンプト文字列は
