@@ -11,6 +11,24 @@ If that's you, thank you.
 
 ### 2026-08-22
 
+**Fixed:** Japanese (and presumably other IME-composed) text was still
+garbled after all the fixes above, because Terminal.app on this iBook sends
+each byte of IME-committed text prefixed with a literal `0x16` (Ctrl-V) —
+the traditional Unix terminal "LNEXT" signal meaning "take the next
+character literally" — even though this program's line editor puts the
+terminal in raw mode and doesn't interpret that signal itself, so the
+`0x16` bytes were landing in the buffer as garbage and corrupting the UTF-8.
+Found by adding a temporary debug-logging mode to the line editor
+(`CLAUDE_DEBUG_INPUT=path claude`) and capturing the actual bytes from a
+real session: typing "トウキョウト" produced `16 e3 16 83 16 88 16 e3 16 82
+16 a6 ...` — strip out every `16` and what's left,
+`e3 83 88 e3 82 a6 ...`, is perfectly valid UTF-8 for exactly that word.
+Plain ASCII typed directly (not via IME) had no `0x16` bytes at all, which
+is why this only ever affected Japanese input. Fixed by having the line
+editor strip each `0x16` and treat the byte after it as the real one,
+verified by feeding this exact captured byte sequence through a test
+harness and confirming it now decodes back to "トウキョウト".
+
 **Fixed:** `Install.command` telling you to "Press Enter to close this
 window" even though pressing Enter doesn't actually close the Terminal
 window (that depends on your Terminal profile's "When the shell exits"
@@ -101,6 +119,23 @@ and full-width characters so Japanese input edits correctly too.
 使ってくれて、気づいてくれて、ありがとうございます。
 
 ### 2026-08-22
+
+**修正:** ここまでの一連の修正を経てもなお、日本語(や、恐らく他のIME経由の
+入力)が文字化けしていた根本原因。実機のTerminal.appは、IMEで確定した
+テキストを渡すとき、各バイトの前に文字通り`0x16`(Ctrl-V。Unix系端末で
+伝統的に「次の1文字をそのまま扱え(LNEXT)」という合図に使われてきたバイト)
+を付けて送ってきていました。この行編集機能は端末をraw modeにして自前で
+入力を読んでおり、このLNEXTの合図を解釈していなかったため、`0x16`がゴミ
+バイトとしてそのままバッファに混入し、UTF-8を壊していました。行編集機能に
+一時的なデバッグログ機能(`CLAUDE_DEBUG_INPUT=パス claude`)を追加し、
+実機で実際に届いたバイト列を記録してもらったところ判明しました:「トウキョウ
+ト」と入力すると`16 e3 16 83 16 88 16 e3 16 82 16 a6 ...`という列が届いて
+おり、`16`を全部取り除いた`e3 83 88 e3 82 a6 ...`は、まさに「トウキョウト」
+を表す完全に正しいUTF-8でした。IME経由でなく直接タイプした半角英数字には
+`0x16`が一切付いていなかったことも確認でき、これが日本語入力だけで起きて
+いた理由も説明できました。行編集機能が`0x16`を読み飛ばし、その次のバイトを
+本来のデータとして扱うように修正し、実機で記録された、このバイト列そのもの
+をテストに使って「トウキョウト」に正しくデコードされることを確認しました。
 
 **修正:** `Install.command`が「Enterキーで閉じます」と表示するのに、実際には
 Enterを押してもターミナルのウィンドウ自体は閉じない(閉じるかどうかは

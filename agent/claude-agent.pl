@@ -388,11 +388,26 @@ sub confirm {
         # キュー。マルチバイト文字の続きだと思って読んだバイトが実際には
         # continuationバイトの形式(10xxxxxx)でなかった場合に使う。
         my @pending;
-        my $read_byte = sub {
+        my $read_one_byte = sub {
             return shift @pending if @pending;
             my $ch;
             my $n = sysread(STDIN, $ch, 1);
             return (defined $n && $n > 0) ? $ch : undef;
+        };
+        # Mac OS X Tigerの Terminal.app は、IME(日本語入力など)で確定した
+        # テキストを渡す際、各バイトの前に0x16(Ctrl-V。端末で伝統的に
+        #「次の1文字をそのまま扱う(LNEXT)」の合図として使われるバイト)を
+        # 付けて送ってくることがある。このプログラムはraw modeで自前で
+        # 入力を処理しておりLNEXTの解釈をしていないため、何もしないと
+        # この合図のバイト自体がゴミとして文字列に混入し、UTF-8が壊れて
+        # 文字化けする。ここで0x16を読み飛ばし、次のバイトを本来のデータ
+        # として扱う。
+        my $read_byte = sub {
+            my $ch = $read_one_byte->();
+            if (defined $ch && $ch eq "\x16") {
+                $ch = $read_one_byte->();
+            }
+            return $ch;
         };
 
         my $result;
