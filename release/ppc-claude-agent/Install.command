@@ -225,7 +225,7 @@ CLAUDE_PROVIDER="${CLAUDE_PROVIDER:-anthropic}"
 RESPONSE_FILE="/tmp/claude-install-check-$$.json"
 
 if [ "$CLAUDE_PROVIDER" = "gemini" ]; then
-  MODEL="${CLAUDE_MODEL:-gemini-3.6-flash}"
+  MODEL="${CLAUDE_MODEL:-gemini-3.5-flash-lite}"
   # thinkingConfigを省略するとGemini 3系は既定で"HIGH"(深く考える)になり、
   # ただの疎通確認でも数十秒待たされることがあるため、LOWを明示する。
   HTTP_CODE=$("$CURL_BIN" -s --cacert "$CACERT" \

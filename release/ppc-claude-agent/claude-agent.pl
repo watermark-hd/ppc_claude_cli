@@ -55,7 +55,7 @@ sub configure_provider {
     if ($provider eq 'gemini') {
         $ENV{GEMINI_API_KEY} or die "GEMINI_API_KEY を設定してください\n";
         $API_KEY = $ENV{GEMINI_API_KEY};
-        $MODEL   = $ENV{CLAUDE_MODEL} || 'gemini-3.6-flash';
+        $MODEL   = $ENV{CLAUDE_MODEL} || 'gemini-3.5-flash-lite';
         $API_URL = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent";
     }
     elsif ($provider eq 'anthropic') {

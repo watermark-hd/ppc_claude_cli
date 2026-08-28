@@ -60,6 +60,14 @@ ever made it into `setup.sh`, the source-build path. Ported the same up-front "A
 Gemini" prompt into `Install.command`, and renamed its installed command from `claude` to
 `advisor` to match. `README.txt` inside the zip updated to match.
 
+**Changed:** Default Gemini model switched from `gemini-3.6-flash` to
+`gemini-3.5-flash-lite`. Found the hard way, on the actual iBook: the free tier for
+`gemini-3.6-flash` allows only 20 requests *per day* — trivially used up just installing
+and testing — while `flash-lite` tiers get a far larger free daily allowance. Casual
+day-to-day questions don't need the newest model anyway; anyone doing serious/business-grade
+work would be reaching for a modern machine, not this one. Override with `CLAUDE_MODEL` if
+you want the newer model back.
+
 ### 2026-08-22
 
 **Fixed:** Typing a line long enough to wrap past the terminal's width filled
@@ -237,6 +245,14 @@ Escか Ctrl+Cで、何も変えずにきれいに取り消せます。
 Geminiか」を最初に聞く同じ流れを`Install.command`にも移植し、インストールされる
 コマンド名も`claude`から`advisor`に合わせて変更しました。zip内の`README.txt`も
 合わせて更新しています。
+
+**変更:** Geminiの既定モデルを`gemini-3.6-flash`から`gemini-3.5-flash-lite`に
+変更しました。実機のiBookで判明したのですが、`gemini-3.6-flash`の無料枠は
+**1日20リクエストまで**で、インストール確認とテストだけであっさり使い切って
+しまいました。`flash-lite`系のモデルは無料枠の1日あたり上限がずっと大きいです。
+日常の雑談程度なら最新モデルである必要はなく、本格的な分析やビジネス用途が
+必要な方は最新のMacやWindowsを使ってもらう、という前提での判断です。
+以前のモデルに戻したい場合は`CLAUDE_MODEL`で上書きできます。
 
 ### 2026-08-22
 
