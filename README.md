@@ -8,8 +8,9 @@
 A project to keep an old PowerPC Mac useful as a real AI coding assistant, instead of
 throwing it away. The official Claude Code CLI requires Node.js 18+, and V8 dropped
 PowerPC support years ago, so it can't run there directly. Instead, this project is a
-**self-contained, lightweight agent written in Perl that talks to the Anthropic API
-directly over curl**.
+**self-contained, lightweight agent written in Perl that talks directly to an AI API over
+curl** — either Anthropic (Claude) or, as of the latest version, Google's Gemini API,
+which has a free tier that needs no credit card at all.
 
 ### Tested environment
 
@@ -85,11 +86,14 @@ actually just the linker grabbing the wrong library. `remote-build-curl.sh` sets
 If you see `SSL connection using TLSv1.2 / ...`, the handshake succeeded — the core
 obstacle is cleared.
 
-#### 5. Set up your API key and the `claude` command
+#### 5. Set up your API key and the `advisor` command
 
-Once `claude-agent.pl` is in `~/claude-build/`, run the included `setup.sh`. It walks you
-through getting a key, reads it without echoing it to the screen, detects common paste
-mistakes, saves it, installs the `claude` command, and does a real connectivity check.
+Once `claude-agent.pl` is in `~/claude-build/`, run the included `setup.sh`. It first asks
+which provider to use — **Anthropic (Claude)**, the more capable option that needs a
+pay-as-you-go billing account, or **Gemini (Google)**, which has a free tier and no credit
+card requirement (defaults to Gemini). Either way, it then walks you through getting that
+provider's key, reads it without echoing it to the screen, detects common paste mistakes,
+saves it, installs the `advisor` command, and does a real connectivity check.
 
 ```bash
 scp agent/claude-agent.pl setup.sh ibook:~/claude-build/
@@ -97,41 +101,60 @@ ssh ibook
 bash ~/claude-build/setup.sh
 ```
 
-If you don't have an API key yet, follow the script's instructions to create one at
-[console.anthropic.com](https://console.anthropic.com/) (**a different site from claude.ai**).
-Create a key under "API Keys" and add a small amount of credit under "Billing".
+If you don't have a key yet, follow the script's instructions:
+- Anthropic: create one at [console.anthropic.com](https://console.anthropic.com/)
+  (**a different site from claude.ai**) under "API Keys", and add a small amount of credit
+  under "Billing".
+- Gemini: create one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+  with any Google account — no billing setup needed for the free tier.
 
 Once setup finishes, open a new terminal (or run `source ~/.bash_profile`) and just type
-`claude` to start.
+`advisor` to start — the same command either way; which provider it talks to is whatever
+`setup.sh` saved to `~/.claude-agent-env`. To switch later, delete that file and run
+`setup.sh` again. (It's called `advisor` rather than something Claude- or Gemini-specific
+on purpose — whoever's using it shouldn't have to know or care which AI is answering.)
 
 ### About the agent (`agent/claude-agent.pl`)
 
 - **A single file, zero external CPAN dependencies** — runs on Tiger's stock Perl 5.8.6 alone
 - JSON encode/decode is a small hand-written recursive-descent parser, just enough for the
-  Claude API's message structure
+  Claude/Gemini APIs' message structures
 - Implements four tools: `read_file` / `write_file` / `list_dir` / `run_shell`
 - File writes and shell commands prompt for confirmation before running, to avoid accidents
 - HTTP is handled by shelling out to the curl binary you built (keeping TLS entirely out of
   Perl, so the only two things that need building are OpenSSL and curl)
-- The system prompt tells Claude to reply in whatever language the user writes in, so
+- The system prompt tells the model to reply in whatever language the user writes in, so
   conversations switch between English/Japanese/etc. automatically — no client-side
   language detection needed
+- Conversation history is always kept internally in Anthropic's Messages-API shape; when
+  `CLAUDE_PROVIDER=gemini`, it's translated to and from Gemini's `contents`/`parts` shape
+  only at the moment of the API call, so the terminal input handling and tool execution
+  code don't need to know or care which provider is active
+- Typing `/claude` or `/gemini` mid-conversation switches providers on the fly — handy if
+  you want Claude's extra capability for real coding work but Gemini's free tier the rest
+  of the time (e.g. handing the machine to a kid). If that provider's key isn't in the
+  environment yet (`setup.sh` can save both up front, see below), it's prompted for right
+  there, hidden like a password field — press Esc or Ctrl+C to back out instead, and
+  nothing changes. Enter it once and it can optionally be saved to `~/.claude-agent-env`
+  for next time. The existing conversation history carries over across the switch since
+  it's provider-agnostic
 
 ### Notes on distributing this (about billing)
 
 This repository (the build scripts and the agent itself) is free to share, but **actually
-using the API requires each person to get their own Anthropic API key and pay for their own
-usage.**
+using the API requires each person to get their own API key.**
 
 - No API key is embedded in the code anywhere (`claude-agent.pl` only reads it from an
   environment variable). Sharing this project never exposes your key or billing to anyone
   else
-- Anyone who downloads it needs to create their own account at
+- With Gemini, the free tier (no credit card, generous daily quota on the Flash models) is
+  enough for casual use — someone can start using this without spending anything
+- With Anthropic, anyone who downloads it needs to create their own account at
   [console.anthropic.com](https://console.anthropic.com/) and add credit under Billing
   (this is separate, pay-as-you-go billing — not the same as a claude.ai Pro/Max
   subscription)
-- `setup.sh` walks the user through all of this, so people unfamiliar with API keys aren't
-  left guessing
+- `setup.sh` walks the user through all of this for whichever provider they pick, so people
+  unfamiliar with API keys aren't left guessing
 
 ### Gotchas we hit
 
@@ -160,6 +183,18 @@ usage.**
 - **Pasting the placeholder `<...>` brackets from an example along with the key**: the
   shell interprets `<`/`>` as redirection, so `ANTHROPIC_API_KEY` silently ends up empty.
   `setup.sh` detects and warns about this
+- **Gemini 3 requires echoing back a `thoughtSignature` on tool calls**: when the model
+  returns a `functionCall` part, it comes with an opaque `thoughtSignature`. Send the next
+  turn back without that exact signature attached to that same part, and the call fails
+  with a 400 — this was optional on Gemini 2.5 but is enforced on Gemini 3. The agent
+  carries it along on the internal `tool_use` block and re-attaches it when re-serializing
+  to Gemini's `contents` format
+- **Reading the API response with `:encoding(UTF-8)` can corrupt multibyte text**: same
+  root cause as the STDIN issue above — Perl 5.8.6's PerlIO `:encoding(UTF-8)` layer can
+  split a multibyte character across a buffer boundary and throw `utf8 "\xXX" does not map
+  to Unicode`. This showed up when a `run_shell` result contained Japanese filenames (e.g. a
+  `ダウンロード` folder). Fixed the same way: read the response as raw bytes, then decode
+  the whole string at once with `Encode::decode`
 
 ### License / disclaimer
 
@@ -174,7 +209,8 @@ community that keeps old machines alive and useful.
 
 古いPowerPCマシンを捨てずに、実用的なAIコーディングアシスタントとして活かすためのプロジェクトです。
 公式の Claude Code CLI は Node.js (18+) が前提で、V8 が PowerPC 対応を打ち切っているため直接は動きません。
-そこで **curl 経由で Anthropic API を直接叩く自己完結型の軽量エージェント** を Perl で実装しています。
+そこで **curl 経由でAI APIを直接叩く自己完結型の軽量エージェント** を Perl で実装しています。使うAPIは
+Anthropic (Claude) か、最新版で対応したGoogleのGemini API(クレジットカード不要の無料枠あり)から選べます。
 
 ### 動作確認環境
 
@@ -250,11 +286,13 @@ G4での所要時間は40分前後。
 
 `SSL connection using TLSv1.2 / ...` が出てハンドシェイクが成功すれば壁は突破です。
 
-#### 5. APIキーの設定と `claude` コマンドのセットアップ
+#### 5. APIキーの設定と `advisor` コマンドのセットアップ
 
 `claude-agent.pl` を `~/claude-build/` に配置したら、付属の `setup.sh` を実行してください。
-APIキーの案内・入力(画面には表示されません)・よくある入力ミスの検出・保存・`claude` コマンドの
-設置・実際の疎通確認までを自動でやってくれます。
+最初に「どちらのAIを使うか」を聞かれます — 一番賢いけど従量課金でクレジットカードが必要な
+**Anthropic (Claude)**か、無料枠がありクレジットカード不要な**Gemini (Google)**か(デフォルトは
+Gemini)。選んだ後は、そのプロバイダのキーの案内・入力(画面には表示されません)・よくある
+入力ミスの検出・保存・`advisor` コマンドの設置・実際の疎通確認までを自動でやってくれます。
 
 ```bash
 scp agent/claude-agent.pl setup.sh ibook:~/claude-build/
@@ -262,36 +300,54 @@ ssh ibook
 bash ~/claude-build/setup.sh
 ```
 
-APIキーをまだ持っていない場合は、スクリプトの案内に沿って
-[console.anthropic.com](https://console.anthropic.com/)(**claude.aiとは別サイト**)で発行してください。
-「API Keys」から `sk-ant-api03-...` という文字列を発行し、「Billing」で少額のクレジットをチャージします。
+キーをまだ持っていない場合は、スクリプトの案内に沿って発行してください。
+- Anthropic: [console.anthropic.com](https://console.anthropic.com/)(**claude.aiとは別サイト**)
+  の「API Keys」から発行し、「Billing」で少額のクレジットをチャージします。
+- Gemini: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)で、お持ちの
+  Googleアカウントで発行できます。無料枠を使う分にはクレジットカードの登録は不要です。
 
-セットアップが終わったら、新しいターミナル(または `source ~/.bash_profile`)で `claude` と
-打つだけで起動します。
+セットアップが終わったら、新しいターミナル(または `source ~/.bash_profile`)で `advisor` と
+打つだけで起動します。コマンド名はどちらのプロバイダでも同じ`advisor`で、実際にどちらと話すかは
+`setup.sh`が`~/.claude-agent-env`に保存した内容次第です。後で切り替えたくなったら、
+そのファイルを削除して`setup.sh`をもう一度実行してください。(コマンド名をあえてClaudeや
+Gemini固有にしていないのは、使う人がどっちのAIが答えてるか意識しなくていいようにするためです)
 
 ### エージェントについて (`agent/claude-agent.pl`)
 
 - **単一ファイル、外部CPANモジュール依存ゼロ** — Tiger標準のPerl 5.8.6だけで動きます
-- JSON encode/decodeはClaude APIのメッセージ構造に必要な範囲を自前実装(再帰下降パーサー)
+- JSON encode/decodeはClaude/Gemini両APIのメッセージ構造に必要な範囲を自前実装(再帰下降パーサー)
 - 4つのツールを実装: `read_file` / `write_file` / `list_dir` / `run_shell`
 - ファイル書き込みとシェル実行は誤操作防止のため実行前に確認プロンプトを出します
 - HTTP通信は新しくビルドしたcurlをサブプロセスとして呼び出す方式(Perl側にTLS実装を持たせない
   ことで、ビルドの複雑さをOpenSSL/curlの2つだけに閉じ込めています)
 - システムプロンプトで「ユーザーが書いた言語で返答する」よう指示しているため、
   ターミナル側で言語判定をしなくても日本語/英語などが自動で切り替わります
+- 会話履歴は常にAnthropicのMessages API形式で内部保持していて、`CLAUDE_PROVIDER=gemini`の
+  時だけAPI呼び出しの直前・直後にGeminiの`contents`/`parts`形式との変換をかけています。
+  なので、ターミナル入力周りやツール実行のコードはどちらのプロバイダかを一切気にしなくて
+  済む設計です
+- 会話中に `/claude` または `/gemini` と打つと、その場でプロバイダを切り替えられます。
+  普段の込み入ったコーディングにはClaude、それ以外(子供に触らせる時など)は無料のGemini、
+  といった使い分けができます。切り替え先のキーが環境に無い場合は、その場でパスワード欄の
+  ように画面に表示せず入力するよう促されます(`setup.sh`で最初から両方保存しておくことも
+  できます、下記参照)。Escか Ctrl+Cで入力をキャンセルすれば何も変わらず元のプロバイダの
+  ままです。1回入力すれば、次回のために `~/.claude-agent-env` へ保存するか選べます。
+  会話履歴はプロバイダに依存しない形式なので、
+  切り替えてもそれまでの会話はそのまま引き継がれます
 
 ### 配布して使う場合の注意(課金について)
 
 このリポジトリ(ビルドスクリプトとエージェント本体)自体は自由に配布できますが、
-**実際にAPIを使うには、使う人ひとりひとりが自分でAnthropicのAPIキーを発行し、
-自分の利用分だけ課金される**仕組みです。
+**実際にAPIを使うには、使う人ひとりひとりが自分でAPIキーを発行する**必要があります。
 
 - コードにAPIキーは一切含まれていません(`claude-agent.pl` は環境変数からキーを
   読むだけ)。配布者のキーや請求先が他人に渡ることはありません
-- ダウンロードした人はそれぞれ [console.anthropic.com](https://console.anthropic.com/)
+- Geminiなら、無料枠(クレジットカード不要、Flash系モデルなら1日あたりかなりの回数まで無料)
+  だけで気軽に使い始められます。お金を一切かけずに試せます
+- Anthropicの場合、ダウンロードした人はそれぞれ [console.anthropic.com](https://console.anthropic.com/)
   でアカウントを作り、Billingでクレジットをチャージする必要があります
   (claude.aiのPro/Max等のサブスクリプションとは別の、従量課金の仕組みです)
-- `setup.sh` が上記の案内・キー入力・保存・動作確認までをガイドしてくれるので、
+- `setup.sh` がどちらを選んでも上記の案内・キー入力・保存・動作確認までをガイドしてくれるので、
   配布先の人がAPIキーの扱いに詳しくなくても迷いにくい設計にしています
 
 ### ハマりどころ集
@@ -318,6 +374,16 @@ APIキーをまだ持っていない場合は、スクリプトの案内に沿�
 - **説明文の `<...>` (プレースホルダー記号)を含めたままキーを貼り付けてしまう**: シェルでは
   `<` `>` はリダイレクト記号として解釈され、`ANTHROPIC_API_KEY` が空のまま静かに失敗する。
   `setup.sh` はこのミスを検出して警告するようにしてある
+- **Gemini 3はツール呼び出しの`thoughtSignature`を送り返さないと400エラーになる**: モデルが
+  `functionCall`を返す時、そこには不透明な`thoughtSignature`という署名が付いてくる。次のターンで
+  同じパーツに同じ署名を付け直さずに送り返すと400エラーになる — Gemini 2.5までは任意だったが、
+  3系では必須の検証に変わっている。エージェントは内部の`tool_use`ブロックにこれを乗せておいて、
+  Geminiの`contents`形式に再変換する時に付け直すようにしている
+- **APIレスポンスを`:encoding(UTF-8)`で読むとマルチバイト文字が化けることがある**: 上のSTDINの
+  問題と同じ原因で、Perl 5.8.6のPerlIO `:encoding(UTF-8)`層は、バッファの境目でマルチバイト文字が
+  分割されると`utf8 "\xXX" does not map to Unicode`という警告と文字化けを起こす。`run_shell`の
+  結果に日本語ファイル名(`ダウンロード`フォルダなど)が含まれていた時に発覚した。直し方も同じで、
+  生バイトのまま読んでから、まとめて`Encode::decode`で一度にデコードするようにしている
 
 ### ライセンス / 免責
 

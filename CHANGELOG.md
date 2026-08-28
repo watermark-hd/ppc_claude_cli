@@ -9,6 +9,41 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-08-28
+
+**Added:** Gemini (Google) support as an alternative to Anthropic. `setup.sh` now asks
+which one to use up front — Gemini's free tier needs no credit card at all, which turned
+out to be the single biggest thing standing between "cool project" and someone actually
+trying it, based on reaction to this project on the MacRumors PowerPC Macs forum.
+
+Under the hood, conversation history is kept in one internal shape (Anthropic's) regardless
+of provider, and only translated to/from Gemini's `contents`/`parts`/`functionCall` format
+right at the API call boundary — so the terminal input handling and tool execution, the
+bulk of this file, needed zero changes.
+
+**Found (the hard way) and fixed:** Gemini 3 requires echoing back an opaque
+`thoughtSignature` on the exact `functionCall` part it was attached to, or the next turn
+in a multi-tool-call conversation 400s. This was optional on Gemini 2.5 and became a hard
+requirement on 3 — found by watching a real multi-step tool-calling conversation
+(`list_dir` → `run_shell` → `run_shell` → `list_dir`) fail on the second tool call once
+signatures weren't being carried along, on the actual iBook.
+
+**Fixed:** Reading the API response could corrupt Japanese (or any multi-byte) text with a
+`utf8 "\xXX" does not map to Unicode` warning — the exact same PerlIO `:encoding(UTF-8)`
+buffer-boundary bug already fixed for STDIN reads back in the entries below, just showing
+up on the response-reading side this time. Surfaced when a `run_shell` result happened to
+contain a folder named `ダウンロード`. Same fix: read raw bytes, decode the whole thing at
+once afterward.
+
+**Changed:** The command is now `advisor` instead of `claude`. Typing `claude` to talk to
+Gemini was a guaranteed "wait, is this even working?" moment, and this project isn't really
+about any one company's AI — the point was always giving the old machine somewhere to
+answer questions, not which brand answers them.
+
+**Added:** Typing `/claude` or `/gemini` mid-conversation switches providers on the fly,
+carrying the conversation over. If the target's key isn't set yet, it's prompted for right
+there (hidden, like a password field) — Esc or Ctrl+C backs out cleanly instead.
+
 ### 2026-08-22
 
 **Fixed:** Japanese (and presumably other IME-composed) text was still
@@ -117,6 +152,43 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-08-28
+
+**追加:** Anthropicに加えて、Gemini(Google)にも対応しました。`setup.sh`で最初に
+どちらを使うか聞かれます。Geminiの無料枠はクレジットカードが一切不要で、
+MacRumorsのPowerPC Macs板でのこのプロジェクトへの反応を見る限り、これが
+「面白そうだけど試すには至らない」の一番の壁になっていたようです。
+
+内部的には、会話履歴はプロバイダに関わらず常にAnthropic形式で保持していて、
+API呼び出しの直前・直後だけGeminiの`contents`/`parts`/`functionCall`形式に
+変換しています。なので、このファイルの大部分を占めるターミナル入力処理や
+ツール実行のコードは一切変更不要でした。
+
+**実機で見つけて修正:** Gemini 3は、`functionCall`に付いてくる不透明な
+`thoughtSignature`を、次のターンで同じパーツにそのまま付け直して送り返さないと
+400エラーになります。Gemini 2.5までは任意でしたが、3系では必須の検証に
+変わっていました。実際のiBookで、複数回のツール呼び出し(`list_dir` →
+`run_shell` → `run_shell` → `list_dir`)が2回目のツール呼び出しで失敗する形で
+発覚しました。
+
+**修正:** APIレスポンスの読み込みで、日本語(などマルチバイト文字)が
+`utf8 "\xXX" does not map to Unicode`という警告と共に化けることがある不具合。
+以前STDIN読み込みで直したのと全く同じ、PerlIO `:encoding(UTF-8)`のバッファ
+境界バグが、今回はレスポンス読み込み側で出ていました。`run_shell`の結果に
+`ダウンロード`というフォルダ名が含まれていたことで発覚。直し方も同じで、
+生バイトで読んでから最後にまとめてデコードするようにしました。
+
+**変更:** コマンド名を`claude`から`advisor`に変更しました。Geminiと話してるのに
+`claude`と打つのは、確実に「あれ、これ本当に合ってる?」となる瞬間だったので。
+このプロジェクトはそもそも特定の会社のAIが主役なんじゃなくて、古いマシンに
+「何かに答えてくれる相手」を持たせることが目的だったので、どのAIが答えるかは
+コマンド名から消しました。
+
+**追加:** 会話中に`/claude`または`/gemini`と打つと、その場でプロバイダを
+切り替えられます(会話はそのまま引き継がれます)。切り替え先のキーがまだ
+無い場合は、その場でパスワード欄のように画面に表示せず入力を求められます —
+Escか Ctrl+Cで、何も変えずにきれいに取り消せます。
 
 ### 2026-08-22
 

@@ -35,11 +35,43 @@ $| = 1;
 # ------------------------------------------------------------------
 my $CURL      = $ENV{CLAUDE_CURL} || '/usr/local/claude-toolchain/bin/curl';
 my $CACERT    = $ENV{CLAUDE_CACERT} || '/usr/local/claude-toolchain/cacert.pem';
-my $API_KEY   = $ENV{ANTHROPIC_API_KEY} or die "ANTHROPIC_API_KEY を設定してください\n";
-my $MODEL     = $ENV{CLAUDE_MODEL} || 'claude-sonnet-4-5-20250929';
 my $MAX_TOKENS = 4096;
-my $API_URL   = 'https://api.anthropic.com/v1/messages';
-my $ANTHROPIC_VERSION = '2023-06-01';
+# setup.shが使うのと同じパス。/claude, /gemini で新しく入力したキーを
+# 保存する時に使う(setup.shを介さない場合の書き込み先)。
+my $ENV_FILE_PATH = ($ENV{HOME} || '.') . '/.claude-agent-env';
+
+# プロバイダ切り替え。CLAUDE_PROVIDER=gemini でクレジットカード登録不要の
+# Gemini API無料枠を使う(デフォルトはこれまで通りAnthropic)。会話中に
+# /claude, /gemini でも切り替えられる(下の configure_provider 参照)。
+my ($PROVIDER, $API_KEY, $MODEL, $API_URL, $ANTHROPIC_VERSION);
+
+# $providerに応じて$API_KEY/$MODEL/$API_URL等を(再)設定する。起動時と、
+# 会話中の /claude, /gemini コマンドの両方から呼ばれる。対応する環境変数
+# (ANTHROPIC_API_KEY / GEMINI_API_KEY) が無い場合はdieする — 起動時は
+# それでプログラムごと終了、実行中の切り替え時は呼び出し側でevalして
+# catchし、今のプロバイダのまま継続する。
+sub configure_provider {
+    my ($provider) = @_;
+    if ($provider eq 'gemini') {
+        $ENV{GEMINI_API_KEY} or die "GEMINI_API_KEY を設定してください\n";
+        $API_KEY = $ENV{GEMINI_API_KEY};
+        $MODEL   = $ENV{CLAUDE_MODEL} || 'gemini-3.6-flash';
+        $API_URL = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent";
+    }
+    elsif ($provider eq 'anthropic') {
+        $ENV{ANTHROPIC_API_KEY} or die "ANTHROPIC_API_KEY を設定してください\n";
+        $API_KEY = $ENV{ANTHROPIC_API_KEY};
+        $MODEL   = $ENV{CLAUDE_MODEL} || 'claude-sonnet-4-5-20250929';
+        $API_URL = 'https://api.anthropic.com/v1/messages';
+        $ANTHROPIC_VERSION = '2023-06-01';
+    }
+    else {
+        die "不明なプロバイダ: '$provider' (anthropic か gemini を指定してください)\n";
+    }
+    $PROVIDER = $provider;
+}
+
+configure_provider($ENV{CLAUDE_PROVIDER} || 'anthropic');
 
 my $SYSTEM_PROMPT = <<'EOS';
 You are a lightweight coding assistant running in the terminal of a
@@ -194,7 +226,10 @@ package main;
 # curl 呼び出し (新しくビルドしたTLS1.2対応curlを使用)
 # ------------------------------------------------------------------
 sub call_api {
-    my ($body_json) = @_;
+    # $headers はヘッダー文字列(例 "x-api-key: ...")の配列参照。
+    # URL/ヘッダーをプロバイダごとに外から渡す薄いトランスポート層で、
+    # このsub自体はAnthropicかGeminiかを一切知らない。
+    my ($url, $headers, $body_json) = @_;
 
     my $tmp_req    = "/tmp/claude-agent-req-$$.json";
     my $tmp_resp   = "/tmp/claude-agent-resp-$$.json";
@@ -208,12 +243,12 @@ sub call_api {
     # curlの設定ファイル(-K)経由でヘッダを渡す
     open(my $cf, '>', $tmp_config) or die "cannot write $tmp_config: $!\n";
     chmod 0600, $tmp_config;
-    print $cf qq(url = "$API_URL"\n);
+    print $cf qq(url = "$url"\n);
     print $cf qq(request = "POST"\n);
     print $cf qq(cacert = "$CACERT"\n);
-    print $cf qq(header = "x-api-key: $API_KEY"\n);
-    print $cf qq(header = "anthropic-version: $ANTHROPIC_VERSION"\n);
-    print $cf qq(header = "content-type: application/json"\n);
+    for my $h (@$headers) {
+        print $cf qq(header = "$h"\n);
+    }
     print $cf qq(data-binary = "\@$tmp_req"\n);
     print $cf qq(output = "$tmp_resp"\n);
     print $cf qq(write-out = "%{http_code}"\n);
@@ -224,11 +259,18 @@ sub call_api {
     my $http_code = `@{[quote($CURL)]} -K @{[quote($tmp_config)]}`;
     unlink $tmp_req, $tmp_config;
 
-    open(my $rf, '<:encoding(UTF-8)', $tmp_resp) or die "cannot read response: $!\n";
+    # STDIN読み込みと同じ理由(冒頭のコメント参照)で、ここも:encoding(UTF-8)
+    # 層は使わない。Perl 5.8.6のPerlIO :encoding(UTF-8) は、レスポンスの
+    # 中に日本語ファイル名などマルチバイト文字が含まれていると、読み込み
+    # バッファの境目でその文字が分割されて "utf8 does not map to Unicode"
+    # という警告と文字化けを起こすことがある。生バイトで丸ごと読んでから、
+    # 最後にまとめてデコードすることでこれを避ける。
+    open(my $rf, '<', $tmp_resp) or die "cannot read response: $!\n";
     local $/;
-    my $resp_body = <$rf>;
+    my $resp_body_bytes = <$rf>;
     close $rf;
     unlink $tmp_resp;
+    my $resp_body = decode('UTF-8', $resp_body_bytes, FB_DEFAULT);
 
     if ($http_code !~ /^2/) {
         die "API error (HTTP $http_code): $resp_body\n";
@@ -241,6 +283,147 @@ sub quote {
     my ($s) = @_;
     $s =~ s/'/'\\''/g;
     return "'$s'";
+}
+
+# ------------------------------------------------------------------
+# プロバイダごとのリクエスト構築・レスポンス解析
+#
+# 会話履歴(@messages)は常にAnthropicのcontent blocks形式
+# (role => user/assistant, content => 文字列 or [{type=>text/tool_use/
+# tool_result, ...}, ...]) を内部形式として保持する。Gemini利用時は
+# APIを呼ぶ直前にだけこの内部形式をGeminiのcontents/parts形式に変換し、
+# 応答が返ってきたらすぐ内部形式に変換し直す。そうすることで、会話ループや
+# run_tool などの他のコードは一切プロバイダを意識しなくてよい。
+# ------------------------------------------------------------------
+
+sub build_headers {
+    if ($PROVIDER eq 'gemini') {
+        return [ "x-goog-api-key: $API_KEY", "content-type: application/json" ];
+    }
+    return [
+        "x-api-key: $API_KEY",
+        "anthropic-version: $ANTHROPIC_VERSION",
+        "content-type: application/json",
+    ];
+}
+
+sub build_request {
+    my ($messages, $tools, $system) = @_;
+    return $PROVIDER eq 'gemini'
+        ? build_request_gemini($messages, $tools, $system)
+        : build_request_anthropic($messages, $tools, $system);
+}
+
+sub build_request_anthropic {
+    my ($messages, $tools, $system) = @_;
+    return {
+        model      => $MODEL,
+        max_tokens => $MAX_TOKENS,
+        system     => $system,
+        messages   => $messages,
+        tools      => $tools,
+    };
+}
+
+sub build_request_gemini {
+    my ($messages, $tools, $system) = @_;
+
+    my @contents;
+    for my $msg (@$messages) {
+        my $role = $msg->{role} eq 'assistant' ? 'model' : 'user';
+        my @parts;
+        if (!ref $msg->{content}) {
+            # ユーザーが直接打った、ブロック分割されていない生のテキスト
+            push @parts, { text => $msg->{content} };
+        }
+        else {
+            for my $block (@{ $msg->{content} }) {
+                if ($block->{type} eq 'text') {
+                    my $part = { text => $block->{text} };
+                    $part->{thoughtSignature} = $block->{thought_signature} if defined $block->{thought_signature};
+                    push @parts, $part;
+                }
+                elsif ($block->{type} eq 'tool_use') {
+                    my $part = { functionCall => { name => $block->{name}, args => $block->{input} } };
+                    # Gemini 3系は、functionCallを送り返す時に受け取った時と同じ
+                    # thoughtSignatureを付け直さないと400エラーになる(Gemini 2.5
+                    # までは無くても動いていたが、3系では必須の検証に変わった)。
+                    $part->{thoughtSignature} = $block->{thought_signature} if defined $block->{thought_signature};
+                    push @parts, $part;
+                }
+                elsif ($block->{type} eq 'tool_result') {
+                    # Geminiはtool_use_idではなく名前でツール結果を紐付ける
+                    push @parts, {
+                        functionResponse => {
+                            name     => $block->{name},
+                            response => { output => $block->{content} },
+                        },
+                    };
+                }
+            }
+        }
+        push @contents, { role => $role, parts => \@parts };
+    }
+
+    my @function_declarations = map {
+        +{ name => $_->{name}, description => $_->{description}, parameters => $_->{input_schema} }
+    } @$tools;
+
+    return {
+        contents          => \@contents,
+        systemInstruction => { parts => [ { text => $system } ] },
+        tools             => [ { functionDeclarations => \@function_declarations } ],
+        generationConfig  => { maxOutputTokens => $MAX_TOKENS },
+    };
+}
+
+sub parse_response {
+    my ($resp) = @_;
+    return $PROVIDER eq 'gemini'
+        ? parse_response_gemini($resp)
+        : parse_response_anthropic($resp);
+}
+
+sub parse_response_anthropic {
+    my ($resp) = @_;
+    if ($resp->{type} && $resp->{type} eq 'error') {
+        die "APIエラー: " . MiniJSON::encode($resp) . "\n";
+    }
+    return @{ $resp->{content} || [] };
+}
+
+my $gemini_call_seq = 0;
+
+sub parse_response_gemini {
+    my ($resp) = @_;
+    if ($resp->{error}) {
+        die "APIエラー: " . MiniJSON::encode($resp->{error}) . "\n";
+    }
+    my $candidate = $resp->{candidates} && $resp->{candidates}[0];
+    my @blocks;
+    for my $part (@{ ($candidate && $candidate->{content}{parts}) || [] }) {
+        if (defined $part->{text}) {
+            my $block = { type => 'text', text => $part->{text} };
+            $block->{thought_signature} = $part->{thoughtSignature} if defined $part->{thoughtSignature};
+            push @blocks, $block;
+        }
+        elsif ($part->{functionCall}) {
+            $gemini_call_seq++;
+            my $block = {
+                type  => 'tool_use',
+                # GeminiのfunctionCallには本来idが無いので、tool_resultを
+                # 送り返す時にAnthropic形式の内部表現と揃えるための代用ID
+                id    => "gemini-call-$gemini_call_seq",
+                name  => $part->{functionCall}{name},
+                input => $part->{functionCall}{args} || {},
+            };
+            # 次のターンでfunctionCallを送り返す時にそのまま付け直す
+            # (build_request_geminiの対応するelsif参照)
+            $block->{thought_signature} = $part->{thoughtSignature} if defined $part->{thoughtSignature};
+            push @blocks, $block;
+        }
+    }
+    return @blocks;
 }
 
 # ------------------------------------------------------------------
@@ -293,6 +476,54 @@ sub confirm {
     print "\n[確認] $msg\n実行しますか? [y/N] ";
     my $ans = read_line_interactive('', 0);
     return defined($ans) && $ans =~ /^y/i;
+}
+
+# APIキーのような秘密の値を1行、画面に表示せずに読み取る。
+# read_line_interactiveと違い矢印キー入力には対応せず(APIキーの貼り付け
+# だけを想定)、代わりにEscかCtrl+Cのどちらか1発でその場でundefを返して
+# キャンセルできるようにしてある(Escは「未確定の入力を取り消す」の
+# 定番、Ctrl+Cは端末での「操作を中断する」の定番 — どちらの習慣の人でも
+# 迷わないように両対応)。ここではEscの後に他のバイトが続くかどうかを
+# 見ておらず、ESC単体を常にキャンセル扱いにしている — 矢印キーなどの
+# ESC始まりのエスケープシーケンスを解釈する必要が無い(単純な1行入力
+# しか受け付けない)場面だからこそ成立する簡略化。stty rawモードでは
+# ISIGも切れているので、Ctrl+C(0x03)は本物のSIGINTにはならず、ただの
+# 1バイトとしてここに届く。
+# 戻り値: 入力された文字列(生バイト、改行なし)。キャンセル時はundef。
+sub read_secret_or_cancel {
+    my ($prompt) = @_;
+    print $prompt;
+
+    my $orig_stty = `stty -g`;
+    chomp $orig_stty;
+    system('stty', 'raw', '-echo', '-opost');
+
+    my $buf = '';
+    my $cancelled = 0;
+    while (1) {
+        my $ch;
+        my $n = sysread(STDIN, $ch, 1);
+        last unless defined $n && $n > 0;
+        my $b = ord($ch);
+        if ($b == 0x1b || $b == 0x03) {  # Esc または Ctrl+C -> キャンセル
+            $cancelled = 1;
+            last;
+        }
+        elsif ($b == 0x0d || $b == 0x0a) {  # Enter
+            last;
+        }
+        elsif ($b == 0x7f || $b == 0x08) {  # Backspace/Delete
+            substr($buf, -1, 1, '') if length($buf) > 0;
+        }
+        elsif ($b >= 0x20) {
+            $buf .= $ch;
+        }
+        # それ以外の制御バイトは無視
+    }
+
+    system('stty', $orig_stty) if defined $orig_stty && $orig_stty ne '';
+    print "\n";
+    return $cancelled ? undef : $buf;
 }
 
 # ------------------------------------------------------------------
@@ -624,8 +855,9 @@ sub run_tool {
 # ------------------------------------------------------------------
 my @messages;
 
-print "=== iBook G4 Claude Agent ===\n";
-print "こんにちは。(終了は 'exit' または Ctrl-D)\n";
+print "=== iBook G4 Advisor ===\n";
+print "[$PROVIDER / $MODEL]\n";
+print "こんにちは。(終了は 'exit' または Ctrl-D。AI切り替えは /claude か /gemini)\n";
 
 while (1) {
     my $input = read_line_interactive("\nご用件をどうぞ> ");
@@ -635,24 +867,61 @@ while (1) {
     next if $input eq '';
     last if $input eq 'exit';
 
+    if ($input eq '/claude' || $input eq '/gemini') {
+        my $target = $input eq '/claude' ? 'anthropic' : 'gemini';
+        if ($target eq $PROVIDER) {
+            print "\nすでに [$PROVIDER / $MODEL] です。\n";
+        }
+        else {
+            eval { configure_provider($target) };
+            if ($@) {
+                # キーが無くて切り替えられない場合、その場で入力してもらう。
+                # EscかCtrl+Cでキャンセルすれば今までどおり元のプロバイダのまま続けられる。
+                my $key_name = $target eq 'gemini' ? 'GEMINI_API_KEY' : 'ANTHROPIC_API_KEY';
+                my $key = read_secret_or_cancel("\n$key_name がまだ設定されていません。入力してください(Escまたは Ctrl+Cでキャンセル)\n> ");
+                if (!defined $key || $key eq '') {
+                    print "\nキャンセルしました。[$PROVIDER / $MODEL] のままです。\n";
+                }
+                else {
+                    $ENV{$key_name} = $key;
+                    eval { configure_provider($target) };
+                    if ($@) {
+                        print "\nそれでも切り替えられませんでした: $@";
+                    }
+                    else {
+                        print "\n[$PROVIDER / $MODEL] に切り替えました。ここまでの会話はそのまま引き継がれます。\n";
+                        if (confirm("このキーを $ENV_FILE_PATH に保存して、次回から入力せずに使えるようにしますか")) {
+                            if (open(my $ef, '>>', $ENV_FILE_PATH)) {
+                                print $ef "export $key_name=$key\n";
+                                close $ef;
+                                chmod 0600, $ENV_FILE_PATH;
+                                print "保存しました。\n";
+                            }
+                            else {
+                                print "保存に失敗しました($ENV_FILE_PATH に書き込めません)。\n";
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+                print "\n[$PROVIDER / $MODEL] に切り替えました。ここまでの会話はそのまま引き継がれます。\n";
+            }
+        }
+        next;
+    }
+
     push @messages, { role => 'user', content => $input };
 
     while (1) {
-        my $body = {
-            model => $MODEL,
-            max_tokens => $MAX_TOKENS,
-            system => $SYSTEM_PROMPT,
-            messages => \@messages,
-            tools => \@TOOLS,
-        };
-        my $resp = call_api(MiniJSON::encode($body));
+        my $body = build_request(\@messages, \@TOOLS, $SYSTEM_PROMPT);
+        my $resp = call_api($API_URL, build_headers(), MiniJSON::encode($body));
 
-        if ($resp->{type} && $resp->{type} eq 'error') {
-            print "APIエラー: " . MiniJSON::encode($resp) . "\n";
+        my @content_blocks = eval { parse_response($resp) };
+        if ($@) {
+            print $@;
             last;
         }
-
-        my @content_blocks = @{ $resp->{content} || [] };
         push @messages, { role => 'assistant', content => \@content_blocks };
 
         my @tool_results;
@@ -666,6 +935,7 @@ while (1) {
                 push @tool_results, {
                     type => 'tool_result',
                     tool_use_id => $block->{id},
+                    name => $block->{name},
                     content => $result,
                 };
             }
