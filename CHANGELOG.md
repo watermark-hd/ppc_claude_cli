@@ -44,7 +44,38 @@ answer questions, not which brand answers them.
 carrying the conversation over. If the target's key isn't set yet, it's prompted for right
 there (hidden, like a password field) — Esc or Ctrl+C backs out cleanly instead.
 
+**Fixed:** Gemini requests were a lot slower than they needed to be — a plain "what's the
+main ingredient of beer?" took roughly 30 seconds on the actual iBook. Gemini 3 models
+default to `thinkingLevel` "HIGH" (maximum internal reasoning) whenever the request doesn't
+set it, and nothing here was setting it. Now defaults to "LOW" for snappier answers on
+casual questions, overridable with `CLAUDE_GEMINI_THINKING=high` for anything that
+genuinely needs deeper reasoning (Gemini 2.5 models get the equivalent via
+`thinkingBudget` instead, since that series doesn't have `thinkingLevel`). Applied the same
+fix to `setup.sh`'s and `Install.command`'s connectivity checks, which had the identical
+problem.
+
+**Fixed:** The double-click installer (`Install.command`, the one that ships in the
+distributed zip) still only knew about Anthropic — the Gemini provider choice had only
+ever made it into `setup.sh`, the source-build path. Ported the same up-front "Anthropic or
+Gemini" prompt into `Install.command`, and renamed its installed command from `claude` to
+`advisor` to match. `README.txt` inside the zip updated to match.
+
 ### 2026-08-22
+
+**Fixed:** Typing a line long enough to wrap past the terminal's width filled
+the screen with the same line repeated over and over — every keystroke,
+Backspace, arrow-key edit, and Up/Down history recall left another copy of
+the wrapped text behind instead of editing in place. Found from a screenshot
+of an actual iBook session showing a wall of identical prompts. The line
+editor's redraw only did "clear the current row, then reprint" before every
+edit; once the input wrapped onto more than one terminal row, that only ever
+cleared the last of those rows, so the earlier ones from the previous redraw
+were never touched. Fixed by tracking how many rows the previous redraw
+occupied, moving the cursor back to the top of that block, and clearing
+everything from there to the end of the screen before repainting — verified
+with a pty + a virtual-terminal renderer, covering long wrapping input,
+Backspace, Left/Right, and Up/Down history recall of both short and
+wrapping entries.
 
 **Fixed:** Japanese (and presumably other IME-composed) text was still
 garbled after all the fixes above, because Terminal.app on this iBook sends
@@ -190,7 +221,36 @@ API呼び出しの直前・直後だけGeminiの`contents`/`parts`/`functionCall
 無い場合は、その場でパスワード欄のように画面に表示せず入力を求められます —
 Escか Ctrl+Cで、何も変えずにきれいに取り消せます。
 
+**修正:** Geminiへのリクエストが不必要に遅かった不具合。実機のiBookで
+「ビールの主成分は?」という単純な質問に約30秒かかっていました。Gemini 3系の
+モデルはリクエストで`thinkingLevel`(内部でどれだけ深く考えるか)を指定しないと
+既定で"HIGH"(最大限考える)になりますが、このコードはどこでもそれを指定して
+いませんでした。気軽な質問には素早く答えられるよう既定を"LOW"にし、じっくり
+考えてほしい時のために`CLAUDE_GEMINI_THINKING=high`で元の挙動に戻せるように
+しました(Gemini 2.5系は`thinkingLevel`が無いので、代わりに`thinkingBudget`で
+同等の設定をします)。`setup.sh`と`Install.command`の疎通確認にも同じ問題が
+あったため、同じ修正を適用しています。
+
+**修正:** ダブルクリック用インストーラー(`Install.command`。配布用zipに入って
+いる方)が、まだAnthropicしか知りませんでした — Gemini対応の選択肢は、ソース
+からビルドする手順用の`setup.sh`にしか入っていませんでした。「Anthropicか
+Geminiか」を最初に聞く同じ流れを`Install.command`にも移植し、インストールされる
+コマンド名も`claude`から`advisor`に合わせて変更しました。zip内の`README.txt`も
+合わせて更新しています。
+
 ### 2026-08-22
+
+**修正:** ターミナルの横幅を超えて折り返すくらい長い行を入力すると、同じ行が
+画面いっぱいに何度も表示されてしまう不具合。文字入力・Backspace・矢印キーでの
+編集・↑↓での履歴呼び出しのどれをやっても、折り返した行がクリアされずに
+どんどん積み重なっていました。実機のiBookで、同じプロンプトがずらっと並んだ
+スクリーンショットから発覚。行編集の再描画処理は「今いる1行だけをクリアして
+再表示」という作りで、入力が複数行に折り返した瞬間、最後の行しかクリアできて
+おらず、それより上の行(前回の再描画分)がそのまま残ってしまっていました。
+前回の再描画で使った行数を記録し、その先頭行までカーソルを戻してから画面末尾
+までをまとめてクリアするよう修正。ptyと仮想端末レンダラーを使い、折り返す
+長文入力・Backspace・左右矢印・短い/長い履歴の↑↓呼び出しで、いずれも重複
+なく描画されることを確認済みです。
 
 **修正:** ここまでの一連の修正を経てもなお、日本語(や、恐らく他のIME経由の
 入力)が文字化けしていた根本原因。実機のTerminal.appは、IMEで確定した

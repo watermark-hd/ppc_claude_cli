@@ -272,11 +272,13 @@ RESPONSE_FILE="/tmp/claude-setup-check-$$.json"
 
 if [ "$CLAUDE_PROVIDER" = "gemini" ]; then
   MODEL="${CLAUDE_MODEL:-gemini-3.6-flash}"
+  # thinkingConfigを省略するとGemini 3系は既定で"HIGH"(深く考える)になり、
+  # ただの疎通確認でも数十秒待たされることがあるため、LOWを明示する。
   HTTP_CODE=$("$CURL_BIN" -s --cacert "$CACERT" \
     "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent" \
     -H "x-goog-api-key: $GEMINI_API_KEY" \
     -H "content-type: application/json" \
-    -d '{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":10}}' \
+    -d '{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":10,"thinkingConfig":{"thinkingLevel":"LOW"}}}' \
     -o "$RESPONSE_FILE" \
     -w "%{http_code}")
 else
