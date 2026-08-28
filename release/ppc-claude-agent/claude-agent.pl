@@ -81,6 +81,18 @@ files and run commands in the user's working directory. Keep replies
 concise, and always reply in the same language the user wrote in
 (if they write in Japanese, reply in Japanese; if English, reply in
 English; and so on for other languages).
+
+Environment quirks to keep in mind for run_shell, so you get it right on
+the first try instead of trial-and-error (each attempt needs the user's
+explicit y/N confirmation, so retries are especially disruptive here):
+- The system's stock `curl` is linked against an old OpenSSL and cannot
+  make HTTPS requests (TLS handshake failure). A modern, TLS-capable curl
+  is available via the `$CLAUDE_CURL` environment variable instead - for
+  any HTTPS fetch, use `"$CLAUDE_CURL" --cacert "$CLAUDE_CACERT" ...`
+  rather than plain `curl`.
+- If Python is needed, assume it's an old Python 2.x (no `urllib.request`,
+  no f-strings, no `except X as e:` - use `except Exception, e:` and the
+  legacy `urllib`/`urllib2` modules instead).
 EOS
 
 # ------------------------------------------------------------------

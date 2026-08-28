@@ -68,6 +68,16 @@ day-to-day questions don't need the newest model anyway; anyone doing serious/bu
 work would be reaching for a modern machine, not this one. Override with `CLAUDE_MODEL` if
 you want the newer model back.
 
+**Fixed:** Asking the agent to fetch a URL (e.g. "summarize this website") could take five
+separate `run_shell` attempts, each needing its own y/N confirmation, before one finally
+worked — the system's stock `curl` can't do HTTPS at all (no TLS 1.2), and the model kept
+guessing modern Python 3 syntax (`urllib.request`, `except X as e:`) against Tiger's old
+Python 2. The agent already has a TLS-capable curl available to it internally, and it turns
+out that's inherited into every `run_shell` subprocess too, via the `$CLAUDE_CURL` (and
+`$CLAUDE_CACERT`) environment variables the `advisor` wrapper script exports — the system
+prompt just never mentioned it. Added a short note about both quirks (use `$CLAUDE_CURL`
+for HTTPS, assume old Python 2 syntax) so the right approach gets picked on the first try.
+
 ### 2026-08-22
 
 **Fixed:** Typing a line long enough to wrap past the terminal's width filled
@@ -253,6 +263,17 @@ Geminiか」を最初に聞く同じ流れを`Install.command`にも移植し、
 日常の雑談程度なら最新モデルである必要はなく、本格的な分析やビジネス用途が
 必要な方は最新のMacやWindowsを使ってもらう、という前提での判断です。
 以前のモデルに戻したい場合は`CLAUDE_MODEL`で上書きできます。
+
+**修正:** 「このサイトを要約して」のようにURL取得を頼むと、`run_shell`の試行が
+5回も必要になり、その都度y/Nの確認が挟まって画面が賑やかになっていた不具合。
+システム標準の`curl`はTLS 1.2に対応しておらずHTTPSを一切扱えず、しかもモデルは
+Tigerの古いPython 2に対してPython 3の書き方(`urllib.request`や
+`except X as e:`)を何度も試して失敗していました。実はTLS対応のcurlは
+`advisor`ラッパースクリプトが設定する`$CLAUDE_CURL`(と`$CLAUDE_CACERT`)という
+環境変数経由で`run_shell`の子プロセスにもすでに渡っていたのですが、
+システムプロンプトにその存在を書いていませんでした。この2点(HTTPSには
+`$CLAUDE_CURL`を使うこと、Pythonは古い2系である前提で書くこと)を一言
+書き加えることで、最初の1回で正しい方法を選べるようにしました。
 
 ### 2026-08-22
 
