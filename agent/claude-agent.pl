@@ -373,8 +373,25 @@ sub build_request_gemini {
         contents          => \@contents,
         systemInstruction => { parts => [ { text => $system } ] },
         tools             => [ { functionDeclarations => \@function_declarations } ],
-        generationConfig  => { maxOutputTokens => $MAX_TOKENS },
+        generationConfig  => {
+            maxOutputTokens => $MAX_TOKENS,
+            thinkingConfig  => _gemini_thinking_config(),
+        },
     };
+}
+
+# Gemini 3系は thinkingLevel を省略すると既定で"HIGH"(できる限り深く考える)
+# になり、「ビールの主成分は?」のような単純な質問でも最初の1文字が出るまで
+# 数十秒かかることがある(実機で確認済み)。この非力なiBook上での対話用途では
+# 速さを優先してLOWを既定にし、CLAUDE_GEMINI_THINKING=high で元の挙動に戻せる
+# ようにする。Gemini 2.5系はthinkingLevelではなくthinkingBudget(0〜24576、
+# -1で動的思考)を使うため、モデル名で分岐する。
+sub _gemini_thinking_config {
+    my $want_high = lc($ENV{CLAUDE_GEMINI_THINKING} || 'low') eq 'high';
+    if ($MODEL =~ /^gemini-3/) {
+        return { thinkingLevel => $want_high ? 'HIGH' : 'LOW' };
+    }
+    return { thinkingBudget => $want_high ? -1 : 0 };
 }
 
 sub parse_response {
