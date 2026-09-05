@@ -9,6 +9,22 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-05
+
+**Fixed:** On a real PowerMac G4 (Mac OS X 10.4.0, build 8A428), moving the cursor left
+with the arrow keys and then pressing Backspace deleted the wrong character — several
+positions away from where the cursor visually appeared, sometimes leaving the character you
+actually wanted to delete untouched. Tracked down over SSH to the real machine: `stty size`
+there reports `0 0` even in a perfectly normal terminal window, and the line editor's
+`_term_width` helper treated that `0` as a legitimate column count instead of an invalid
+reading, which made every cursor-repositioning calculation collapse to "column 0" — so
+after any Left/Right arrow move, the redraw always snapped the visual cursor back to the
+very start of the line while the actual edit position (tracked separately, correctly) was
+wherever it should be. Backspace itself was never wrong; the cursor you were looking at was
+just lying about where it was. Fixed by rejecting `0` as a column count and falling back to
+80, same as an unparseable `stty size` already did. Reproduced and confirmed fixed with a
+pty forced to a 0x0 window size, matching the real machine's behavior exactly.
+
 ### 2026-08-28
 
 **Added:** Gemini (Google) support as an alternative to Anthropic. `setup.sh` now asks
@@ -201,6 +217,22 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-05
+
+**修正:** 実機のPowerMac G4(Mac OS X 10.4.0、ビルド8A428)で、矢印キーでカーソルを
+左に動かしてからBackspaceを押すと、見た目のカーソル位置とは違う場所の文字が
+消えてしまう不具合(意図した文字が消えず、数文字先が消えることも)。実機に
+SSHで直接繋いで原因を特定しました: この環境では`stty size`が、ごく普通の
+ターミナルウィンドウでも`0 0`を返すことがあり、行編集の`_term_width`が
+この`0`を「異常値」ではなく正しい桁数として扱ってしまっていました。その結果、
+カーソル位置の再計算が常に「0列目」に潰れてしまい、矢印キーで動かすたびに
+再描画で見た目のカーソルが行の先頭に飛ばされていました(実際の編集位置自体は
+別途正しく管理されていて、Backspace自体は正しい場所を消していたのですが、
+目に見えているカーソルの方が嘘をついていた、という状態です)。`0`を無効な
+値として弾き、80にフォールバックするよう修正。実機と同じ0x0のウィンドウ
+サイズを疑似端末で強制的に再現し、修正前後で症状が再現・解消することを
+確認済みです。
 
 ### 2026-08-28
 

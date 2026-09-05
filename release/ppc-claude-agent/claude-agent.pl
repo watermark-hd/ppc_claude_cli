@@ -615,10 +615,16 @@ sub read_secret_or_cancel {
         return _display_width_chars(decode('UTF-8', $bytes, FB_DEFAULT));
     }
 
-    # ターミナルの桁数を返す(取得できなければ80にフォールバック)
+    # ターミナルの桁数を返す(取得できない、または0の場合は80にフォールバック)
+    #
+    # 一部の環境(実機のPowerMac G4で確認: Mac OS X 10.4.0, ビルド8A428)では
+    # `stty size` が正常時でも "0 0" を返すことがある。0を桁数としてそのまま
+    # 使うと、_pos_rc が常に(0,0)を返すようになり、カーソルを行頭に固定して
+    # しまう(カーソルキーでの編集後、Backspaceが意図と違う文字を消すバグの
+    # 原因になっていた)。0以下は無効な値として弾く。
     sub _term_width {
         my $wh = `stty size 2>/dev/null`;
-        return $1 if $wh =~ /^\s*\d+\s+(\d+)\s*$/;
+        return $1 if $wh =~ /^\s*\d+\s+(\d+)\s*$/ && $1 > 0;
         return 80;
     }
 
