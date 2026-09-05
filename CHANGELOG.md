@@ -11,6 +11,23 @@ If that's you, thank you.
 
 ### 2026-09-05
 
+**Fixed:** Typing Japanese (or any full-width/double-byte) text at the prompt could
+progressively corrupt the display — text appearing several characters behind the cursor,
+parts of the static banner above the prompt getting overwritten, everything getting worse
+the longer you typed. A debug capture of the raw input bytes (`CLAUDE_DEBUG_INPUT`) showed
+the *data* being received was completely correct the whole time — this was a pure display
+bug in the redraw math, not an input-decoding one. The line editor's row/column
+calculations derived a character's screen position from a single aggregate "total display
+width" divided by the terminal's column count, silently assuming cells always pack
+perfectly. Real terminals don't do that for full-width characters: if only one cell is
+left in a row and the next character needs two, the terminal pushes that whole character
+to the next row rather than splitting it, leaving the last cell of the row blank. Every
+time that happened, the aggregate-width math and the terminal's actual cursor position
+drifted apart by one cell — and since redraws happen on every keystroke, that drift
+compounded into exactly the escalating corruption described above. Fixed by walking the
+text one character at a time to compute cursor position, exactly mirroring how a real
+terminal decides whether a wide character fits in the remaining space on a row.
+
 **Fixed:** On a real PowerMac G4 (Mac OS X 10.4.0, build 8A428), moving the cursor left
 with the arrow keys and then pressing Backspace deleted the wrong character — several
 positions away from where the cursor visually appeared, sometimes leaving the character you
@@ -219,6 +236,20 @@ and full-width characters so Japanese input edits correctly too.
 使ってくれて、気づいてくれて、ありがとうございます。
 
 ### 2026-09-05
+
+**修正:** プロンプトで日本語(や、その他の全角文字)を入力していくと、表示がだんだん
+崩れていく不具合。カーソルより数文字分ズレた位置に文字が現れたり、プロンプトより上に
+ある固定のバナー部分まで上書きされてしまったりし、入力を続けるほど悪化していきました。
+実際に届いている生のバイト列をログに記録する機能(`CLAUDE_DEBUG_INPUT`)で確認したところ、
+受け取っているデータ自体はずっと正しく、入力の読み取りではなく再描画時の位置計算だけが
+おかしいと分かりました。行編集のカーソル位置計算は、それまで「表示幅の合計を端末の桁数で
+割る」という単純な計算をしていて、マス目が常にぴったり詰まる前提になっていました。しかし
+実際の端末はそうではなく、全角文字(幅2)を置く時に残り1マスしかなければ、その文字を
+半分だけ描画したりはせず丸ごと次の行に送り、その行の最後の1マスは空白のまま残します。
+これが起きるたびに、単純計算での位置と端末の実際のカーソル位置が1マスずつズレていき、
+再描画はキー入力のたびに行われるので、そのズレがどんどん積み重なって上記の症状になって
+いました。文字列を1文字ずつ実際に置いていく形でカーソル位置を計算するよう修正し、実際の
+端末が全角文字の折り返しを判断するのと同じ考え方に揃えました。
 
 **修正:** 実機のPowerMac G4(Mac OS X 10.4.0、ビルド8A428)で、矢印キーでカーソルを
 左に動かしてからBackspaceを押すと、見た目のカーソル位置とは違う場所の文字が

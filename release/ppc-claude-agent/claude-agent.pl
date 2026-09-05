@@ -589,22 +589,26 @@ sub read_secret_or_cancel {
         return 1;  # 不正なバイト列は1バイトずつ進める
     }
 
+    # デコード済みの1文字を受け取り、ターミナル上での表示幅(半角=1/全角=2)を返す
+    sub _char_width {
+        my ($ch) = @_;
+        my $cp = ord($ch);
+        return (
+            ($cp >= 0x1100 && $cp <= 0x115F) ||
+            ($cp >= 0x2E80 && $cp <= 0xA4CF) ||
+            ($cp >= 0xAC00 && $cp <= 0xD7A3) ||
+            ($cp >= 0xF900 && $cp <= 0xFAFF) ||
+            ($cp >= 0xFF00 && $cp <= 0xFF60) ||
+            ($cp >= 0xFFE0 && $cp <= 0xFFE6)
+        ) ? 2 : 1;
+    }
+
     # デコード済みのPerl文字列を受け取り、ターミナル上での表示幅
-    # (半角=1/全角=2)を返す
+    # (半角=1/全角=2)の合計を返す
     sub _display_width_chars {
         my ($text) = @_;
         my $w = 0;
-        for my $ch (split //, $text) {
-            my $cp = ord($ch);
-            $w += (
-                ($cp >= 0x1100 && $cp <= 0x115F) ||
-                ($cp >= 0x2E80 && $cp <= 0xA4CF) ||
-                ($cp >= 0xAC00 && $cp <= 0xD7A3) ||
-                ($cp >= 0xF900 && $cp <= 0xFAFF) ||
-                ($cp >= 0xFF00 && $cp <= 0xFF60) ||
-                ($cp >= 0xFFE0 && $cp <= 0xFFE6)
-            ) ? 2 : 1;
-        }
+        $w += _char_width($_) for split //, $text;
         return $w;
     }
 
@@ -628,16 +632,33 @@ sub read_secret_or_cancel {
         return 80;
     }
 
-    # 表示幅$w(セル数)ぶん文字を描画した直後にカーソルが位置する
-    # (0始まりの行, 0始まりの列)を返す。ターミナルの折り返しは、行末に
-    # 達しても次の文字が来るまで改行しない"遅延ラップ"仕様のため、
-    # ちょうど桁数の倍数で折り返る場合はその行の最終列に留まる。
-    sub _pos_rc {
-        my ($w, $cols) = @_;
-        return (0, 0) if $w <= 0 || $cols <= 0;
-        my $row = int(($w - 1) / $cols);
-        my $col = $w % $cols;
-        $col = $cols - 1 if $col == 0;  # 遅延ラップ: ちょうど桁数の倍数のときは行末に留まる
+    # デコード済みの文字列$textを桁数$colsの端末に描画した直後に、
+    # カーソルが位置する(0始まりの行, 0始まりの列)を返す。
+    #
+    # 単純に合計幅を桁数で割るのではなく、1文字ずつ実際に置いていく形で
+    # 計算する。全角文字(幅2)が行末にちょうど1マスだけ余っている状態で
+    # 現れた場合、実際の端末はその文字を半分だけ描画したりはせず、
+    # 丸ごと次の行へ送る(結果、その行の最後の1マスは空白のまま残る)。
+    # 合計幅だけを見る計算ではこの「端数」を考慮できず、日本語入力を
+    # 続けるうちにズレが蓄積して表示が崩れていくバグの原因になっていた。
+    #
+    # ターミナルの折り返しは、行末に達しても次の文字が来るまで改行しない
+    # "遅延ラップ"仕様のため、ちょうど桁数ぴったりで埋まった場合はその行の
+    # 最終列に留まる。
+    sub _walk_position {
+        my ($text, $cols) = @_;
+        return (0, 0) if $cols <= 0;
+        my $row = 0;
+        my $used = 0;  # 現在の行で使用済みのセル数(0..cols)
+        for my $ch (split //, $text) {
+            my $w = _char_width($ch);
+            if ($used + $w > $cols) {
+                $row++;
+                $used = 0;
+            }
+            $used += $w;
+        }
+        my $col = ($used == $cols) ? $cols - 1 : $used;
         return ($row, $col);
     }
 
@@ -667,7 +688,7 @@ sub read_secret_or_cancel {
         (my $redraw_prompt = $prompt) =~ s/^\n+//;
 
         # redraw_promptだけを表示した状態(bufが空)で何行分の表示になるかを初期値とする。
-        my $rows_used = (_pos_rc(_display_width_chars($redraw_prompt), $term_cols))[0] + 1;
+        my $rows_used = (_walk_position($redraw_prompt, $term_cols))[0] + 1;
 
         my $redraw = sub {
             # $bufは生バイトのUTF-8。STDOUTには:encoding(UTF-8)層が付いているので
@@ -686,11 +707,11 @@ sub read_secret_or_cancel {
             print "\x1b[" . ($rows_used - 1) . "A" if $rows_used > 1;
             print "\r\x1b[0J", $full_text;
 
-            my $end_row = (_pos_rc($full_width, $term_cols))[0];
+            my $end_row = (_walk_position($full_text, $term_cols))[0];
             $rows_used = $end_row + 1;
 
             if ($cursor_width < $full_width) {
-                my ($cur_row, $cur_col) = _pos_rc($cursor_width, $term_cols);
+                my ($cur_row, $cur_col) = _walk_position($redraw_prompt . $before, $term_cols);
                 print "\x1b[" . ($end_row - $cur_row) . "A" if $end_row > $cur_row;
                 print "\x1b[" . ($cur_col + 1) . "G";
             }
