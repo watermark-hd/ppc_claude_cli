@@ -9,6 +9,28 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-06
+
+**Fixed:** Scrolling up in the terminal's history could reveal dozens of near-duplicate
+lines — one more character than the last — from earlier in the same conversation, looking
+exactly like a bug even though the live screen and the conversation itself were correct the
+whole time. Cause: the line editor clears and reprints on every keystroke, but ANSI's
+"clear screen" only reaches what's currently visible — once a keystroke's redraw is tall
+enough to push the terminal into scrolling (because the prompt started too close to the
+bottom), whatever scrolled off the top is gone for good, permanently recording that
+in-progress, soon-to-be-replaced state in history. Every further keystroke that grows the
+line past another row boundary repeats this, leaving a trail of growing snapshots that
+never gets erased. Fixed by querying the terminal's actual cursor row before accepting
+input (via the standard VT100 Cursor Position Report, `\x1b[6n`) and, if there isn't much
+room left below, printing enough blank lines up front to reach safer ground - so ordinary
+messages no longer trigger a scroll mid-edit in the first place. Times out safely (0.3s) on
+terminals that don't answer, falling back to the old behavior with no regression. Found,
+while investigating this, that the CPR wait could itself race with the user typing
+immediately afterward and swallow their first keystroke - fixed by validating the response
+byte-by-byte against the exact CPR grammar and pushing back everything read the moment it
+stops matching, so real input (arrow keys included, despite sharing CPR's `ESC [` prefix)
+is never mistaken for a stale reply.
+
 ### 2026-09-05
 
 **Fixed:** Typing Japanese (or any full-width/double-byte) text at the prompt could
@@ -234,6 +256,27 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-06
+
+**修正:** ターミナルをスクロールして過去のやり取りを遡ると、同じ会話の中で「1文字だけ
+増えた」ほぼ同じ行が何十行も並んで見える不具合。今見えている画面も会話の中身もずっと
+正しいのに、パッと見はっきりバグに見えてしまうものでした。原因: 行編集はキー入力の
+たびに画面を消して書き直しますが、ANSIの「画面クリア」は今見えている範囲にしか効き
+ません。プロンプトが画面の下の方に近い位置で始まっていると、ある1回の再描画が縦に
+長くなった瞬間にターミナル自体がスクロールしてしまい、その時に画面の上からはみ出た
+「まだ入力途中の、すぐ後で書き換えられるはずだった状態」が、過去ログとして永久に
+残ってしまいます。それ以降も1行ぶん増えるたびに同じことが繰り返され、消せないまま
+スナップショットが積み重なっていきます。修正としては、入力を受け付ける前に、今の
+カーソル行を端末に直接問い合わせ(VT100の頃からある標準機能「CPR」、`\x1b[6n`)、
+画面下の余白が少なければあらかじめ改行を足して安全な位置まで進めておくようにしました
+。これで、普通の長さのメッセージなら入力の途中でスクロールが起きること自体が無くなり
+ます。この問い合わせに応答しない端末でも0.3秒でタイムアウトし、今までの挙動にそのまま
+戻るので後退はありません。この対応を作る過程で、CPRの応答待ち中にユーザーが直後に
+入力を始めるとタイミングが重なり、最初の1文字を誤って飲み込んでしまう不具合も見つけて
+直しました。CPR応答の書式を1バイトずつ厳密に検証し、合わなくなった時点で読んだバイトを
+全部押し戻すようにすることで、矢印キー(CPRと同じ`ESC [`から始まるため紛らわしい)を
+含め、本物の入力を古い応答と取り違えないようにしています。
 
 ### 2026-09-05
 

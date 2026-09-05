@@ -12,7 +12,7 @@
 use strict;
 use warnings;
 use utf8;  # このファイル自身に書かれた日本語リテラルをUTF-8として解釈する
-use Encode qw(decode FB_DEFAULT);
+use Encode qw(decode encode FB_DEFAULT);
 
 # 画面出力は明示的にUTF-8として扱う。
 binmode STDOUT, ':encoding(UTF-8)';
@@ -619,17 +619,85 @@ sub read_secret_or_cancel {
         return _display_width_chars(decode('UTF-8', $bytes, FB_DEFAULT));
     }
 
-    # ターミナルの桁数を返す(取得できない、または0の場合は80にフォールバック)
+    # ターミナルの(行数, 桁数)を返す(取得できない、または0の場合はフォールバック)。
     #
     # 一部の環境(実機のPowerMac G4で確認: Mac OS X 10.4.0, ビルド8A428)では
     # `stty size` が正常時でも "0 0" を返すことがある。0を桁数としてそのまま
-    # 使うと、_pos_rc が常に(0,0)を返すようになり、カーソルを行頭に固定して
-    # しまう(カーソルキーでの編集後、Backspaceが意図と違う文字を消すバグの
-    # 原因になっていた)。0以下は無効な値として弾く。
-    sub _term_width {
+    # 使うと、_walk_position が常に(0,0)を返すようになり、カーソルを行頭に
+    # 固定してしまう(カーソルキーでの編集後、Backspaceが意図と違う文字を
+    # 消すバグの原因になっていた)。0以下は無効な値として弾く。
+    sub _term_size {
         my $wh = `stty size 2>/dev/null`;
-        return $1 if $wh =~ /^\s*\d+\s+(\d+)\s*$/ && $1 > 0;
-        return 80;
+        if ($wh =~ /^\s*(\d+)\s+(\d+)\s*$/ && $2 > 0) {
+            my ($rows, $cols) = ($1, $2);
+            return ($rows > 0 ? $rows : 24, $cols);
+        }
+        return (24, 80);
+    }
+
+    # カーソルの「今の行番号」(1始まり)を端末に直接問い合わせる(CPR、
+    # `\x1b[6n` → 端末が `\x1b[<行>;<列>R` を返す、VT100の頃からある標準機能)。
+    # 応答が来ない・壊れた環境(端末が対応していない、標準入力が本物の端末
+    # ではない、等)でも固まらないよう、必ずタイムアウト付きで待つ。取得
+    # できなければundefを返し、呼び出し側は「分からない」前提で処理を続ける。
+    #
+    # 重要: この問い合わせの待ち時間中に、ユーザーが実際にキーを押し始める
+    # ことがある(前のターンの応答が終わった直後など)。読んだバイトが
+    # 「CPR応答の形」と1バイトでも食い違った時点で、そこまで読んだバイトを
+    # 全部 $pending_ref に戻す。CPR応答のふりをした本物の入力を誤って
+    # 飲み込んでしまわないようにするための、フォーマットの厳密な検証。
+    sub _query_cursor_row {
+        my ($pending_ref) = @_;
+        print "\x1b[6n";
+        my $deadline = time() + 0.3;
+        my @consumed;
+
+        my $read_raw = sub {
+            my $remain = $deadline - time();
+            return undef if $remain <= 0;
+            my $rin = '';
+            vec($rin, fileno(STDIN), 1) = 1;
+            my $nfound = select(my $rout = $rin, undef, undef, $remain);
+            return undef unless $nfound;
+            my $ch;
+            my $n = sysread(STDIN, $ch, 1);
+            return (defined $n && $n > 0) ? $ch : undef;
+        };
+        my $give_up = sub {
+            unshift @$pending_ref, @consumed;
+            return undef;
+        };
+
+        my $c = $read_raw->();
+        return $give_up->() unless defined $c;
+        push @consumed, $c;
+        return $give_up->() unless $c eq "\x1b";
+
+        $c = $read_raw->();
+        return $give_up->() unless defined $c;
+        push @consumed, $c;
+        return $give_up->() unless $c eq '[';
+
+        my $row = '';
+        while (1) {
+            $c = $read_raw->();
+            return $give_up->() unless defined $c;
+            push @consumed, $c;
+            last if $c eq ';';
+            return $give_up->() unless $c =~ /[0-9]/;
+            $row .= $c;
+        }
+        return $give_up->() if $row eq '';
+
+        while (1) {
+            $c = $read_raw->();
+            return $give_up->() unless defined $c;
+            push @consumed, $c;
+            last if $c eq 'R';
+            return $give_up->() unless $c =~ /[0-9]/;
+        }
+
+        return $row + 0;
     }
 
     # デコード済みの文字列$textを桁数$colsの端末に描画した直後に、
@@ -671,11 +739,36 @@ sub read_secret_or_cancel {
 
         my $orig_stty = `stty -g`;
         chomp $orig_stty;
-        my $term_cols = _term_width();
+        my ($term_rows, $term_cols) = _term_size();
         # -opostが無いと、環境によっては出力後処理(特にocrnl)が有効なままで
         # 再描画に使う"\r"が改行として扱われ、行を上書きするはずが毎回新しい
         # 行を作ってしまう(結果、入力するたびにどんどん改行されていく)。
         system('stty', 'raw', '-echo', '-opost');
+
+        # 誤って先読みしてしまったバイトを次のループへ戻すためのプッシュバック
+        # キュー。マルチバイト文字の続きだと思って読んだバイトが実際には
+        # continuationバイトの形式(10xxxxxx)でなかった場合や、下のCPR問い
+        # 合わせが実は本物のキー入力だった場合に使う。read_line_interactive
+        # の間ずっと使うので、CPR問い合わせより前にここで定義しておく。
+        my @pending;
+
+        # 画面の下の方で入力を始めると、長い文章を打つ・日本語変換をやり直す
+        # うちに再描画そのものが端末を下にスクロールさせてしまい、その時々の
+        # 「打ちかけの状態」が二度と消せないスクロールバック(過去ログ)に
+        # 焼き付いてしまう(ANSIの画面クリアは今見えている範囲にしか効かない
+        # ため)。カーソルの今の行をCPRで問い合わせ、画面下の余白が少なければ
+        # 入力を始める前に改行を足して、先に安全な位置までスクロールさせて
+        # おく。これで少なくともある程度の長さまでは、入力中に新たなスクロール
+        # が起きなくなる。CPRに対応していない/応答がない環境では何もしない
+        # (今までの挙動のまま)。
+        my $cur_row = _query_cursor_row(\@pending);
+        if (defined $cur_row) {
+            my $headroom_wanted = 10;
+            my $remaining = $term_rows - $cur_row;
+            if ($remaining < $headroom_wanted) {
+                print "\n" x ($headroom_wanted - $remaining), "\r";
+            }
+        }
 
         my $buf = '';                    # 生バイト列
         my $pos = 0;                     # カーソル位置(バイト単位、常に文字境界)
@@ -699,20 +792,40 @@ sub read_secret_or_cancel {
             my $full_width  = _display_width_chars($full_text);
             my $cursor_width = _display_width_chars($redraw_prompt . $before);
 
+            # デバッグ用: 実際に画面へ送るエスケープシーケンスと、その根拠になった
+            # 計算結果をそのまま記録する。CLAUDE_DEBUG_INPUT有効時のみ。
+            # 「送った内容」と「実際の画面表示」を突き合わせれば、このコードの
+            # 計算ミスなのか、端末側がその命令を正しく解釈できていないのかを
+            # 切り分けられる。
+            _debug_log(sprintf(
+                "[redraw] term_cols=%d pos=%d buf_hex=%s rows_used_before=%d full_width=%d cursor_width=%d\n",
+                $term_cols, $pos, unpack('H*', $buf), $rows_used, $full_width, $cursor_width
+            ));
+
             # 前回の再描画で使った行数ぶんカーソルを先頭行まで戻し、そこから
             # 画面末尾までを丸ごとクリアする。折り返した行が複数あっても、
             # 最終行だけをクリアする"\r\x1b[K"では前の行が消えずに残って
             # しまい、入力するたびに同じ文字列が積み重なって表示される
             # バグの原因になっていた。
-            print "\x1b[" . ($rows_used - 1) . "A" if $rows_used > 1;
+            if ($rows_used > 1) {
+                _debug_log(sprintf("[redraw] send: CUU %d\n", $rows_used - 1));
+                print "\x1b[" . ($rows_used - 1) . "A";
+            }
+            _debug_log(sprintf("[redraw] send: CR + ED0 + text=%s\n", unpack('H*', encode('UTF-8', $full_text))));
             print "\r\x1b[0J", $full_text;
 
             my $end_row = (_walk_position($full_text, $term_cols))[0];
             $rows_used = $end_row + 1;
+            _debug_log(sprintf("[redraw] end_row=%d rows_used_after=%d\n", $end_row, $rows_used));
 
             if ($cursor_width < $full_width) {
                 my ($cur_row, $cur_col) = _walk_position($redraw_prompt . $before, $term_cols);
-                print "\x1b[" . ($end_row - $cur_row) . "A" if $end_row > $cur_row;
+                _debug_log(sprintf("[redraw] cursor not at end: cur_row=%d cur_col=%d\n", $cur_row, $cur_col));
+                if ($end_row > $cur_row) {
+                    _debug_log(sprintf("[redraw] send: CUU %d\n", $end_row - $cur_row));
+                    print "\x1b[" . ($end_row - $cur_row) . "A";
+                }
+                _debug_log(sprintf("[redraw] send: CHA %d\n", $cur_col + 1));
                 print "\x1b[" . ($cur_col + 1) . "G";
             }
         };
@@ -720,10 +833,8 @@ sub read_secret_or_cancel {
         print $prompt;
         _debug_log("=== read_line_interactive start ===\n");
 
-        # 誤って先読みしてしまったバイトを次のループへ戻すためのプッシュバック
-        # キュー。マルチバイト文字の続きだと思って読んだバイトが実際には
-        # continuationバイトの形式(10xxxxxx)でなかった場合に使う。
-        my @pending;
+        # (プッシュバックキュー@pendingはCPR問い合わせと共有するため、
+        # この関数の先頭で既に定義済み)
         my $read_one_byte = sub {
             return shift @pending if @pending;
             my $ch;
