@@ -9,6 +9,36 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-08
+
+**Investigated:** A report from real PowerBook G4 hardware describing text appearing "in
+the wrong place" while editing - retyped characters landing somewhere unrelated, and lines
+that seemed to corrupt themselves. Captured a `CLAUDE_DEBUG_INPUT` byte-level log on the
+actual machine and traced every keystroke against the buffer position it produced. Result:
+the underlying editing logic was not at fault - every Left/Right arrow press moved the
+cursor by exactly one full-width character (3 bytes), with no drift, no skipped bytes, no
+double-firing. What happened was that the cursor had been moved several characters left,
+then a couple right, landing between two characters that look nearly identical to their
+neighbors in a wall of kanji - and new text got typed in right there, producing a sentence
+that reads as garbled even though nothing was lost or duplicated. In other words: the
+program tracked the cursor correctly the whole time, but the *person* editing lost track of
+where it was, because the only indicator of cursor position was the terminal's native
+blinking cursor - easy to lose on an old, dim, or small display, especially with dense
+full-width text.
+
+**Fixed:** Rather than the data itself, fixed the thing that actually caused the confusion:
+when the cursor is not at the end of the line, everything after it is now printed in
+reverse video (standard ANSI `SGR 7`, supported since basically every VT100-compatible
+terminal, including Mac OS X 10.4's Terminal.app). This makes "what's after my cursor"
+visually unmistakable at a glance, instead of relying on spotting a blinking underline
+among a wall of characters. No new keybinding was added - per earlier feedback, editing
+should stay usable by the small set of commands people already remember (arrows, Backspace,
+Ctrl+C to cancel the line), not grow a new one to work around a visibility problem. Verified
+the exact byte sequence sent to the terminal with a pty test (confirmed only the intended
+tail bytes get wrapped in `\x1b[7m...\x1b[0m`. and the cursor-position math is untouched),
+and reran the full existing regression suite (wrapping input, multi-row Left-arrow, arrow
+races, Backspace, zero-size stty) with no change in behavior beyond the added highlighting.
+
 ### 2026-09-07
 
 **Changed:** Yesterday's scrollback fix reserved headroom unconditionally at the start of
@@ -288,6 +318,38 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-08
+
+**調査:** 実機のPowerBook G4から、編集中に文字が「関係ないところに入る」、行が
+勝手に壊れる、という報告をいただきました。実機で`CLAUDE_DEBUG_INPUT`のバイト
+レベルのログを取得し、キー入力1回1回をバッファ上の位置まで全部突き合わせて
+追跡しました。結果: 編集ロジック自体には問題がありませんでした。左右矢印キーを
+押すたびに、カーソルは全角1文字分(3バイト)ぴったり正確に動いており、ズレも、
+バイトの取りこぼしも、二重発火もありませんでした。実際に起きていたのは、左矢印で
+数文字分カーソルを戻した後、右矢印で2文字分だけ戻し過ぎを直した結果、漢字が
+並ぶ中でほとんど見分けのつかない2文字の間にカーソルが止まっており、そこに新しい
+文章を打ち込んでしまっていた、ということでした。文字は一切失われても重複しても
+おらず、ただ「挿入された場所」が意図と違っていたために、文として壊れて見えて
+いました。つまり、プログラムはカーソル位置を最初から最後まで正確に把握して
+いましたが、**操作している本人がカーソルの位置を見失っていた** ということです。
+原因は、カーソル位置を示すものが端末標準の点滅カーソルしかなく、古い/小さい/
+暗めの画面で、しかも漢字がぎっしり並んだ画面の中では非常に見づらいことでした。
+
+**修正:** データそのものではなく、混乱の原因になっていた「見えにくさ」の方を
+直しました。カーソルが行の途中にある時、カーソルより後ろの文字列をすべて反転
+表示(標準ANSIの`SGR 7`。VT100互換端末ならほぼ必ず対応しており、Mac OS X 10.4の
+Terminal.appでも問題なく表示できます)にするようにしました。これで「カーソルの
+後ろに何があるか」が、点滅する下線を文字の海から探すのではなく、一目で分かる
+ようになります。新しいキー操作は追加していません — 以前いただいたご指摘の
+とおり、編集操作はすでに覚えている少数のコマンド(矢印キー・Backspace・行を
+まっさらにするCtrl+C)だけで完結すべきで、見えにくさを補うために新しいコマンドを
+増やすべきではないからです。実際に端末へ送られる生のバイト列をptyテストで
+確認し(意図した「カーソルより後ろ」の部分だけが`\x1b[7m...\x1b[0m`で囲まれ、
+カーソル位置計算そのものには一切手を入れていないことを確認済み)、既存の回帰
+テスト一式(折り返す入力・複数行にまたがる左矢印・矢印キーとの競合・Backspace・
+`stty size`が0 0を返す環境)もすべて、反転表示が加わった以外は変化なく通ることを
+確認しています。
 
 ### 2026-09-07
 

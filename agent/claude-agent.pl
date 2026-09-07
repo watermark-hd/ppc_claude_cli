@@ -830,8 +830,23 @@ sub read_secret_or_cancel {
                 _debug_log(sprintf("[redraw] send: CUU %d\n", $cursor_display_row));
                 print "\x1b[" . $cursor_display_row . "A";
             }
-            _debug_log(sprintf("[redraw] send: CR + ED0 + text=%s\n", unpack('H*', encode('UTF-8', $full_text))));
-            print "\r\x1b[0J", $full_text;
+            # カーソルが行の途中にある時は、カーソルより後ろの文字列を
+            # 反転表示(SGR 7)にする。実機テスト(PowerBook G4)で、矢印キーで
+            # カーソルを動かした後に自分が今どこにいるか見失い、意図しない
+            # 位置に文字を挿入してしまう事例が見つかったための対策。端末の
+            # 点滅カーソルだけでは古い液晶/CRTでは位置が分かりにくいため、
+            # 「ここから先が今のカーソルの後ろです」を文字色の反転で明示する。
+            # SGR(反転)は幅を持たない制御コードなので、_walk_position等の
+            # 桁計算には一切影響しない。
+            if ($cursor_width < $full_width) {
+                my $after = substr($text, length($before));
+                _debug_log(sprintf("[redraw] send: CR + ED0 + text=%s (reverse-video tail after cursor)\n",
+                    unpack('H*', encode('UTF-8', $full_text))));
+                print "\r\x1b[0J", $redraw_prompt, $before, "\x1b[7m", $after, "\x1b[0m";
+            } else {
+                _debug_log(sprintf("[redraw] send: CR + ED0 + text=%s\n", unpack('H*', encode('UTF-8', $full_text))));
+                print "\r\x1b[0J", $full_text;
+            }
 
             $rows_used = $end_row + 1;
             _debug_log(sprintf("[redraw] rows_used_after=%d\n", $rows_used));
