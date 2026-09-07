@@ -752,23 +752,17 @@ sub read_secret_or_cancel {
         # の間ずっと使うので、CPR問い合わせより前にここで定義しておく。
         my @pending;
 
-        # 画面の下の方で入力を始めると、長い文章を打つ・日本語変換をやり直す
-        # うちに再描画そのものが端末を下にスクロールさせてしまい、その時々の
-        # 「打ちかけの状態」が二度と消せないスクロールバック(過去ログ)に
-        # 焼き付いてしまう(ANSIの画面クリアは今見えている範囲にしか効かない
-        # ため)。カーソルの今の行をCPRで問い合わせ、画面下の余白が少なければ
-        # 入力を始める前に改行を足して、先に安全な位置までスクロールさせて
-        # おく。これで少なくともある程度の長さまでは、入力中に新たなスクロール
-        # が起きなくなる。CPRに対応していない/応答がない環境では何もしない
-        # (今までの挙動のまま)。
-        my $cur_row = _query_cursor_row(\@pending);
-        if (defined $cur_row) {
-            my $headroom_wanted = 10;
-            my $remaining = $term_rows - $cur_row;
-            if ($remaining < $headroom_wanted) {
-                print "\n" x ($headroom_wanted - $remaining), "\r";
-            }
-        }
+        # 画面の下の方で入力を続けると、再描画そのものが端末を下にスクロール
+        # させてしまい、その時々の「打ちかけの状態」が二度と消せないスクロール
+        # バック(過去ログ)に焼き付いてしまう(ANSIの画面クリアは今見えている
+        # 範囲にしか効かないため)。カーソルの今の行(このプロンプトが始まる
+        # 絶対行)をCPRで問い合わせておき、$redraw内で「今回の内容が画面の
+        # 最下段を超えそうだ」と分かった、まさにその時だけ改行を差し込んで
+        # 避ける(下記$redraw参照)。短い返事がほとんどの通常利用では改行は
+        # 一切入らず、実際に長くなった時だけ必要な分だけ余白ができる。CPRに
+        # 対応していない/応答がない環境では$start_rowがundefのままになり、
+        # この機能は素通りされる(今までの挙動のまま)。
+        my $start_row = _query_cursor_row(\@pending);
 
         my $buf = '';                    # 生バイト列
         my $pos = 0;                     # カーソル位置(バイト単位、常に文字境界)
@@ -783,6 +777,12 @@ sub read_secret_or_cancel {
         # redraw_promptだけを表示した状態(bufが空)で何行分の表示になるかを初期値とする。
         my $rows_used = (_walk_position($redraw_prompt, $term_cols))[0] + 1;
 
+        # カーソルが「ブロックの先頭から数えて今何行目にいるか」(0始まり)。
+        # 左右矢印でカーソルが行の途中(かつ複数行ある場合は別の行)に来ている
+        # ことがあるので、$rows_used(ブロック全体の高さ)とは別に必要になる。
+        # 初期状態(buf空)ではカーソルは末尾、つまりredraw_promptの最終行にいる。
+        my $cursor_display_row = (_walk_position($redraw_prompt, $term_cols))[0];
+
         my $redraw = sub {
             # $bufは生バイトのUTF-8。STDOUTには:encoding(UTF-8)層が付いているので
             # 一度Perl文字列にデコードしてから渡さないと二重エンコードで文字化けする。
@@ -791,6 +791,7 @@ sub read_secret_or_cancel {
             my $full_text   = $redraw_prompt . $text;
             my $full_width  = _display_width_chars($full_text);
             my $cursor_width = _display_width_chars($redraw_prompt . $before);
+            my $end_row = (_walk_position($full_text, $term_cols))[0];
 
             # デバッグ用: 実際に画面へ送るエスケープシーケンスと、その根拠になった
             # 計算結果をそのまま記録する。CLAUDE_DEBUG_INPUT有効時のみ。
@@ -798,25 +799,42 @@ sub read_secret_or_cancel {
             # 計算ミスなのか、端末側がその命令を正しく解釈できていないのかを
             # 切り分けられる。
             _debug_log(sprintf(
-                "[redraw] term_cols=%d pos=%d buf_hex=%s rows_used_before=%d full_width=%d cursor_width=%d\n",
-                $term_cols, $pos, unpack('H*', $buf), $rows_used, $full_width, $cursor_width
+                "[redraw] term_cols=%d pos=%d buf_hex=%s rows_used_before=%d full_width=%d cursor_width=%d end_row=%d\n",
+                $term_cols, $pos, unpack('H*', $buf), $rows_used, $full_width, $cursor_width, $end_row
             ));
 
-            # 前回の再描画で使った行数ぶんカーソルを先頭行まで戻し、そこから
-            # 画面末尾までを丸ごとクリアする。折り返した行が複数あっても、
-            # 最終行だけをクリアする"\r\x1b[K"では前の行が消えずに残って
-            # しまい、入力するたびに同じ文字列が積み重なって表示される
-            # バグの原因になっていた。
-            if ($rows_used > 1) {
-                _debug_log(sprintf("[redraw] send: CUU %d\n", $rows_used - 1));
-                print "\x1b[" . ($rows_used - 1) . "A";
+            # 遅延式の画面末尾よけ: 今回の内容が実際に端末の最下段を超えそうに
+            # なった、まさにその瞬間だけ改行を差し込んで避ける(毎回先回りで
+            # 予約すると、短い返事がほとんどの通常利用でも無駄な空白行が
+            # スクロールバックに残ってしまうため)。$start_row(このプロンプトが
+            # 始まった絶対行、CPRで取得済み)が分かっている時だけ判定できる。
+            if (defined $start_row && $start_row + $end_row >= $term_rows) {
+                my $overflow = $start_row + $end_row - $term_rows + 1;
+                _debug_log(sprintf("[redraw] lazy headroom: send %d newline(s), start_row %d -> %d\n",
+                    $overflow, $start_row, $start_row - $overflow));
+                print "\n" x $overflow, "\r";
+                $start_row -= $overflow;
+                $start_row = 1 if $start_row < 1;
+            }
+
+            # 前回の再描画で「カーソルが実際にいた行」(ブロック先頭から数えて
+            # 何行目か)ぶんだけ戻し、そこから画面末尾までを丸ごとクリアする。
+            # 左右矢印で行の途中に戻っていることがあるため、ここは
+            # $rows_used(ブロック全体の高さ)ではなく$cursor_display_rowを
+            # 使う必要がある — ブロックの高さを使うと、カーソルが先頭寄りの
+            # 行にいる時に戻りすぎて、プロンプトより上の会話履歴まで消して
+            # しまう(実機のテストで確認したバグ)。最終行だけをクリアする
+            # "\r\x1b[K"では前の行が消えずに残って積み重なる、という当初の
+            # バグもこのまとめてクリアする方式で防いでいる。
+            if ($cursor_display_row > 0) {
+                _debug_log(sprintf("[redraw] send: CUU %d\n", $cursor_display_row));
+                print "\x1b[" . $cursor_display_row . "A";
             }
             _debug_log(sprintf("[redraw] send: CR + ED0 + text=%s\n", unpack('H*', encode('UTF-8', $full_text))));
             print "\r\x1b[0J", $full_text;
 
-            my $end_row = (_walk_position($full_text, $term_cols))[0];
             $rows_used = $end_row + 1;
-            _debug_log(sprintf("[redraw] end_row=%d rows_used_after=%d\n", $end_row, $rows_used));
+            _debug_log(sprintf("[redraw] rows_used_after=%d\n", $rows_used));
 
             if ($cursor_width < $full_width) {
                 my ($cur_row, $cur_col) = _walk_position($redraw_prompt . $before, $term_cols);
@@ -827,6 +845,9 @@ sub read_secret_or_cancel {
                 }
                 _debug_log(sprintf("[redraw] send: CHA %d\n", $cur_col + 1));
                 print "\x1b[" . ($cur_col + 1) . "G";
+                $cursor_display_row = $cur_row;
+            } else {
+                $cursor_display_row = $end_row;
             }
         };
 

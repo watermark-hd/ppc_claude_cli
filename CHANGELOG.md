@@ -9,6 +9,38 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-07
+
+**Changed:** Yesterday's scrollback fix reserved headroom unconditionally at the start of
+every prompt, which worked, but left a large permanent blank gap in scrollback history
+above the very first prompt — paid even for short replies ("y", "exit") that were never
+going to need the room. Made it lazy instead: the terminal's cursor row is still queried
+once via CPR at the start, but no padding is printed until a specific redraw is actually
+about to reach the bottom of the terminal, and then only exactly enough to clear it. Same
+CPR query as before (no extra cost), just deferred to the moment it's actually needed -
+ordinary short messages now print no padding at all.
+
+**Fixed:** While reasoning through the above, found a real, separate, pre-existing bug:
+moving the cursor left across a *row* boundary (not just a column) with the arrow key -
+e.g. typing several wrapped lines and then pressing Left enough times to land on an earlier
+row - and then editing there could wipe out everything above the prompt, including the
+conversation history, on the very next redraw. The redraw's "move cursor back to the top of
+the block" step always moved up by the block's full height, silently assuming the cursor
+was sitting at the bottom row - true right after typing, but no longer true once Left/Right
+had repositioned it via CHA to an earlier row. The resulting overshoot moved past the top of
+the block and erased whatever was above it. Confirmed with a pty test: type three wrapped
+lines, press Left 25 times to reach the first line, edit there - the banner above the
+prompt vanished on the very next keystroke. Fixed by tracking where the cursor actually
+ended up after each redraw (natural end vs. an earlier row via CHA) and using that instead
+of the block's full height when deciding how far to move up on the next one. This was
+present before today's changes; it just hadn't been exercised by the redraw tests until
+this specific multi-row-Left scenario was tried. Verified: the same pty test now leaves the
+banner intact, and the full existing regression suite (wrapping input, Backspace, arrow
+keys, CPR races) still passes.
+
+Deployed to the machines that were reachable (g4 and pbg4 were offline at the time; ibook
+updated) and repackaged the release zip.
+
 ### 2026-09-06
 
 **Fixed:** Scrolling up in the terminal's history could reveal dozens of near-duplicate
@@ -256,6 +288,40 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-07
+
+**変更:** 昨日のスクロールバック対策は、プロンプトが始まるたびに無条件で余白を
+先回り予約する作りでした。効果はあったのですが、`y`や`exit`のような、そもそも
+余白なんて要らない短い返事の時にも毎回律儀に予約してしまい、結果として一番最初の
+プロンプトより上に、大きな空白がスクロールバックへ永久に残ってしまっていました。
+これを遅延式に変更しました。端末のカーソル行をCPRで問い合わせるのは今まで通り
+最初に1回だけですが、改行を差し込むのは「実際にその再描画が画面の下端に届き
+そうになった、まさにその瞬間」だけにし、しかもその時に必要な分だけにしました。
+CPRの問い合わせ回数は変わらないので、普通の短いメッセージなら余白は一切入り
+ません。
+
+**修正:** 上の対応を考えている過程で、今回とは無関係の、以前からあった本物の
+不具合を見つけました。矢印キーで(列だけでなく)**行をまたいでカーソルを左に戻す**
+と — 例えば折り返した3行分を打った後、左矢印を十分な回数押して最初の行まで
+戻ってから編集する、といった操作 — 次の再描画でプロンプトより上にある会話履歴
+まで消えてしまうことがありました。再描画の「ブロックの先頭までカーソルを戻す」
+処理が、常に「カーソルはブロックの一番下の行にいる」という前提でブロック全体の
+高さぶん戻っていたのが原因でした。これは入力し終えた直後は正しいのですが、
+左右矢印でカーソルが(CHAで)より上の行に動かされた後はもう成り立ちません。
+その結果、戻りすぎてブロックの先頭を通り越し、その上にあったものまで消して
+いました。pty上のテストで確認: 折り返す3行を打ち、左矢印を25回押して1行目まで
+戻って編集すると、次のキー入力でプロンプトより上のバナーが消えることを再現
+できました。修正として、各再描画の後にカーソローが実際にどこに落ち着いたか
+(自然な末尾か、CHAで戻された途中の行か)を記録しておき、次の再描画で戻る量には
+ブロック全体の高さではなくそちらを使うようにしました。これは今日の変更以前から
+存在していた不具合で、この「複数行にまたがる左矢印」という操作パターンをこれまで
+のテストがたまたま踏んでいなかっただけでした。同じptyテストでバナーが消えなく
+なったことと、既存の回帰テスト一式(折り返す入力・Backspace・矢印キー・CPRとの
+競合)がすべて通ることを確認済みです。
+
+到達できたマシンにのみ配布しました(g4とpbg4はこの時点でオフラインだったため、
+ibookのみ更新)。配布用zipも作り直しています。
 
 ### 2026-09-06
 
