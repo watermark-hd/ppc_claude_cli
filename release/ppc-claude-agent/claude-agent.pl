@@ -700,6 +700,89 @@ sub read_secret_or_cancel {
         return $row + 0;
     }
 
+    # _query_cursor_rowと同じだが、列番号も一緒に返す。端末の実際の
+    # 行数・桁数をカーソル移動で実測する_probe_terminal_size用。
+    sub _query_cursor_pos {
+        my ($pending_ref) = @_;
+        print "\x1b[6n";
+        my $deadline = time() + 0.3;
+        my @consumed;
+
+        my $read_raw = sub {
+            my $remain = $deadline - time();
+            return undef if $remain <= 0;
+            my $rin = '';
+            vec($rin, fileno(STDIN), 1) = 1;
+            my $nfound = select(my $rout = $rin, undef, undef, $remain);
+            return undef unless $nfound;
+            my $ch;
+            my $n = sysread(STDIN, $ch, 1);
+            return (defined $n && $n > 0) ? $ch : undef;
+        };
+        my $give_up = sub {
+            unshift @$pending_ref, @consumed;
+            return (undef, undef);
+        };
+
+        my $c = $read_raw->();
+        return $give_up->() unless defined $c;
+        push @consumed, $c;
+        return $give_up->() unless $c eq "\x1b";
+
+        $c = $read_raw->();
+        return $give_up->() unless defined $c;
+        push @consumed, $c;
+        return $give_up->() unless $c eq '[';
+
+        my $row = '';
+        while (1) {
+            $c = $read_raw->();
+            return $give_up->() unless defined $c;
+            push @consumed, $c;
+            last if $c eq ';';
+            return $give_up->() unless $c =~ /[0-9]/;
+            $row .= $c;
+        }
+        return $give_up->() if $row eq '';
+
+        my $col = '';
+        while (1) {
+            $c = $read_raw->();
+            return $give_up->() unless defined $c;
+            push @consumed, $c;
+            last if $c eq 'R';
+            return $give_up->() unless $c =~ /[0-9]/;
+            $col .= $c;
+        }
+        return $give_up->() if $col eq '';
+
+        return ($row + 0, $col + 0);
+    }
+
+    # 端末の本当の行数・桁数を、`stty size`に頼らずカーソル移動+CPRで直接
+    # 実測する。PowerMac G4で`stty size`が"0 0"を返す不具合が見つかったのに
+    # 続き、実機のPowerBook G4では"0 0"ではなく、実際のウィンドウより明らかに
+    # 小さい行数を返す個体があることが実機ログで判明した(44行のウィンドウ
+    # なのに32行と判定され、まだ十分余裕があるのに折り返し回避の改行を
+    # 早々に挿入してしまっていた)。`stty size`はptyドライバ側の値を返すだけ
+    # で、端末エミュレータが実際に表示している行数・桁数とズレることがある。
+    # 代わりに、カーソルを画面外の彼方(行999・列999)へ動かしてから位置を
+    # 問い合わせると、端末は必ず実際の右下角にクランプする(VT100系の標準
+    # 挙動)ので、これで正確な行数・桁数が直接分かる。問い合わせ後は元の
+    # 位置へカーソルを戻す。返り値は(実測した行数, 実測した桁数, 最初に
+    # 問い合わせた時のカーソル行=$start_row用)。CPR自体に応答がない環境
+    # ではいずれもundefを返し、呼び出し側は`stty size`にフォールバックする。
+    sub _probe_terminal_size {
+        my ($pending_ref) = @_;
+        my ($row0, $col0) = _query_cursor_pos($pending_ref);
+        return (undef, undef, undef) unless defined $row0;
+        print "\x1b[9999;9999H";
+        my ($max_row, $max_col) = _query_cursor_pos($pending_ref);
+        print "\x1b[${row0};${col0}H";
+        return (undef, undef, $row0) unless defined $max_row;
+        return ($max_row, $max_col, $row0);
+    }
+
     # デコード済みの文字列$textを桁数$colsの端末に描画した直後に、
     # カーソルが位置する(0始まりの行, 0始まりの列)を返す。
     #
@@ -762,7 +845,16 @@ sub read_secret_or_cancel {
         # 一切入らず、実際に長くなった時だけ必要な分だけ余白ができる。CPRに
         # 対応していない/応答がない環境では$start_rowがundefのままになり、
         # この機能は素通りされる(今までの挙動のまま)。
-        my $start_row = _query_cursor_row(\@pending);
+        #
+        # ついでに、同じCPRのやり取りを使って$term_rows/$term_colsも
+        # `stty size`頼みではなく実測し直す(_probe_terminal_size参照)。
+        # 実測できた場合だけ上書きし、できなければ`stty size`ベースの
+        # 値のまま(今までの挙動)にフォールバックする。
+        my ($probed_rows, $probed_cols, $start_row) = _probe_terminal_size(\@pending);
+        if (defined $probed_rows) {
+            $term_rows = $probed_rows;
+            $term_cols = $probed_cols;
+        }
 
         my $buf = '';                    # 生バイト列
         my $pos = 0;                     # カーソル位置(バイト単位、常に文字境界)
