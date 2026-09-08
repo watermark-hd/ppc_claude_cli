@@ -775,11 +775,34 @@ sub read_secret_or_cancel {
     sub _probe_terminal_size {
         my ($pending_ref) = @_;
         my ($row0, $col0) = _query_cursor_pos($pending_ref);
+        _debug_log(sprintf("[probe] initial pos: row=%s col=%s\n",
+            defined $row0 ? $row0 : 'undef', defined $col0 ? $col0 : 'undef'));
         return (undef, undef, undef) unless defined $row0;
-        print "\x1b[9999;9999H";
+        # 4桁(9999)だと、実機の一部端末(パラメータの桁数を決め打ちで想定して
+        # いる古い実装)でCPRの応答が返って来ない事例が見つかったため、
+        # より無難な3桁(500)に下げた。実在するどの端末もまず500行/桁を
+        # 超えないので、実測用としては十分すぎる大きさ。
+        print "\x1b[500;500H";
         my ($max_row, $max_col) = _query_cursor_pos($pending_ref);
+        _debug_log(sprintf("[probe] after CUP 500;500: max_row=%s max_col=%s\n",
+            defined $max_row ? $max_row : 'undef', defined $max_col ? $max_col : 'undef'));
         print "\x1b[${row0};${col0}H";
         return (undef, undef, $row0) unless defined $max_row;
+
+        # 実機ログで確認: プロンプトが立て続けに始まる(例えば空Enterの直後に
+        # 次の入力が始まる)と、直前の問い合わせの応答がまだ届いている途中
+        # だったり、逆に今回の応答がまだ来ていなかったりして、CPRの応答が
+        # 前後で混線することがある。この時、厳密な文法チェック自体は通って
+        # しまう(ESC [ 数字 ; 数字 R の形にはなっている)せいで、"桁数1"の
+        # ようなあり得ない値をそのまま実測結果として採用してしまい、そこから
+        # 1文字ごとに折り返し・改行が起きる大惨事になっていた。実在するどんな
+        # 端末でも、行数・桁数がこんなに小さいことはまず無いので、明らかに
+        # おかしい値は「実測失敗」として扱い、stty sizeへフォールバックする。
+        if ($max_row < 3 || $max_col < 10) {
+            _debug_log(sprintf("[probe] measured size looks implausible (%dx%d), discarding\n",
+                $max_row, $max_col));
+            return (undef, undef, $row0);
+        }
         return ($max_row, $max_col, $row0);
     }
 
@@ -852,8 +875,13 @@ sub read_secret_or_cancel {
         # 値のまま(今までの挙動)にフォールバックする。
         my ($probed_rows, $probed_cols, $start_row) = _probe_terminal_size(\@pending);
         if (defined $probed_rows) {
+            _debug_log(sprintf("[probe] using measured size: %dx%d (stty said %dx%d)\n",
+                $probed_rows, $probed_cols, $term_rows, $term_cols));
             $term_rows = $probed_rows;
             $term_cols = $probed_cols;
+        } else {
+            _debug_log(sprintf("[probe] measurement failed, falling back to stty size: %dx%d\n",
+                $term_rows, $term_cols));
         }
 
         my $buf = '';                    # 生バイト列

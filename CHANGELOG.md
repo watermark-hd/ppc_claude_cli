@@ -39,6 +39,46 @@ tail bytes get wrapped in `\x1b[7m...\x1b[0m`. and the cursor-position math is u
 and reran the full existing regression suite (wrapping input, multi-row Left-arrow, arrow
 races, Backspace, zero-size stty) with no change in behavior beyond the added highlighting.
 
+### 2026-09-08 (later still)
+
+**Fixed:** Turning debug logging on persistently (so it no longer needs a special command to
+enable) paid off almost immediately: a log covering a session with real editing - Backspace,
+arrow keys, inserting text mid-line - showed things going badly wrong near the end, matching
+the report exactly ("chaos" after going back and adding text). Found the smoking gun:
+
+```
+[probe] initial pos: row=32 col=1
+[probe] after CUP 500;500: max_row=32 max_col=1
+[probe] using measured size: 32x1 (stty said 32x59)
+```
+
+Yesterday's terminal-size probe measured a **1-column-wide** terminal - obviously wrong,
+since `stty size` (correctly, on this run) said 59. With `$term_cols` at 1, the line editor
+believed every single character needed its own row, and started inserting a newline for
+essentially every keystroke - which is exactly what "chaos" looks like from the user's side:
+the banner and everything above scrolls away within a few characters. Root cause: two prompts
+starting back-to-back in quick succession (e.g. right after an accidental blank Enter) can
+let one prompt's CPR response arrive late and get read by the *next* prompt's probe instead -
+the strict grammar check still accepts it (it's a well-formed `ESC [ row ; col R`, just for
+the wrong query), so a stale or mismatched reply slips through as if it were the real answer.
+Timeout-and-pushback protects against a response that never comes or comes back malformed; it
+doesn't protect against one that arrives, is well-formed, but is answering the wrong question.
+
+Rather than trying to eliminate that race entirely (would need matching queries to responses,
+which real terminals have no way to do), added a plausibility floor: no real terminal is ever
+1 column wide, so a measured size under an obviously-impossible threshold (3 rows / 10 columns)
+is now treated the same as a failed measurement and discarded in favor of `stty size` - which,
+per today's earlier finding, might itself occasionally be wrong, but is never as catastrophically
+wrong as "1 column". This bounds the worst case to "no worse than before yesterday's fix" while
+keeping the fix's benefit for the common case.
+
+Reproduced with a pty test that injects a deliberately bogus `1;1R` reply to the size-probe
+query: confirmed the pre-fix code loses the banner off-screen within a handful of keystrokes,
+confirmed today's fix falls back cleanly to `stty size` and types normally. Full existing
+regression suite still passes.
+
+Deployed to g4 and pbg4 (ibook offline at the time).
+
 ### 2026-09-08 (later)
 
 **Fixed:** The PowerBook G4 test above turned up a second, more serious bug behind the
@@ -408,6 +448,49 @@ Terminal.appでも問題なく表示できます)にするようにしました�
 テスト一式(折り返す入力・複数行にまたがる左矢印・矢印キーとの競合・Backspace・
 `stty size`が0 0を返す環境)もすべて、反転表示が加わった以外は変化なく通ることを
 確認しています。
+
+### 2026-09-08(続報その2)
+
+**修正:** デバッグログを「毎回自動で残る」設定に変えた効果がすぐに出ました。実際に
+Backspace・矢印キー・行の途中への挿入をした実機セッションのログに、報告いただいた
+「戻ったり後から付け足すとカオス」とぴったり一致する崩れ方が記録されていました。
+決定的な証拠がこれです:
+
+```
+[probe] initial pos: row=32 col=1
+[probe] after CUP 500;500: max_row=32 max_col=1
+[probe] using measured size: 32x1 (stty said 32x59)
+```
+
+昨日入れたばかりの「端末サイズの実測」が、**桁数1**というありえない値を掴んで
+しまっていました。この時`stty size`は(今回は)正しく59と答えていたので、
+明らかにこちらの実測の方がおかしいです。`$term_cols`が1になると、行編集ロジックは
+「1文字ごとに次の行へ折り返さなければいけない」と思い込み、ほぼ1文字打つたびに
+改行を挿入し始めます。ユーザー側から見れば、数文字打っただけでバナーごと画面の
+上の方が全部スクロールして消えていく「カオス」そのものです。原因: 2つのプロンプトが
+間を置かずに立て続けに始まる(例えば誤って空Enterを押した直後など)と、片方の
+プロンプトへのCPR応答が遅れて届き、**次のプロンプトの実測処理がそれを読んでしまう**
+ことがあります。文法チェック自体は(`ESC [ 行 ; 桁 R`という正しい形にはなっている
+ので)通ってしまい、「別の質問への回答」を「今回の質問への回答」として誤って
+受け取ってしまいます。タイムアウト+読み戻しの仕組みは「応答が来ない」「応答が
+壊れている」場合は守ってくれますが、「応答は来ているし形も正しいが、答える相手を
+間違えている」場合までは守ってくれません。
+
+このレースコンディション自体を完全になくすのは(応答がどの質問に対するものかを
+突き合わせる仕組みが、実在する端末側には無いため)難しいので、代わりに「明らかに
+おかしい値は捨てる」という下限チェックを入れました。現実のどんな端末も桁数1という
+ことはまずあり得ないので、実測結果が明らかにあり得ない範囲(3行未満・10桁未満)
+だった場合は「実測失敗」と同じ扱いにして`stty size`にフォールバックするようにし
+ました。`stty size`自体、今日の前半で見つけた通りズレることもありますが、「桁数1」
+ほど致命的にズレることはまずないため、最悪でも「昨日の修正より前の状態と同程度」に
+とどめつつ、通常時は今日の修正の恩恵をそのまま受けられます。
+
+わざと壊れた`1;1R`という応答を実測処理に返すptyテストで再現し、この安全策を
+入れる前のコードでは数文字打っただけでバナーごと画面外に消えること、修正後は
+`stty size`へきれいにフォールバックして正常に入力できることの両方を確認しました。
+既存の回帰テスト一式もすべて通ることを確認済みです。
+
+g4とpbg4に配布しました(ibookはこの時点でオフラインでした)。
 
 ### 2026-09-08(続報)
 
