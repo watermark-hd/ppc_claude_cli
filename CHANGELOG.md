@@ -39,6 +39,22 @@ tail bytes get wrapped in `\x1b[7m...\x1b[0m`. and the cursor-position math is u
 and reran the full existing regression suite (wrapping input, multi-row Left-arrow, arrow
 races, Backspace, zero-size stty) with no change in behavior beyond the added highlighting.
 
+### 2026-09-08 (one more)
+
+**Fixed:** A PowerBook G4 transcript showed something that looked, at first glance, like
+another terminal rendering bug: a run of lines each one character longer than the last -
+"クリ", "クリー", "クリーム", "クリームと"... - stacking up between two `claude>` replies.
+It wasn't a rendering bug at all. Gemini's thinking feature returns its intermediate
+reasoning as its own "thought" parts in the response, separate from the final answer, each
+marked with a `thought: true` flag - and the response parser was pulling in *every* part
+that had a `text` field, thinking parts included, and displaying all of them as if they were
+the final reply. The model's out-loud reasoning ("cream... no, cream and tea...") was being
+shown verbatim as consecutive lines of output. Fixed by skipping any part marked
+`thought: true` before collecting text - confirmed with a unit test feeding a mix of thought
+and final-answer parts through the parser, verifying only the real answer survives.
+
+Deployed to all three machines and repackaged the release zip.
+
 ### 2026-09-08 (later still)
 
 **Fixed:** Turning debug logging on persistently (so it no longer needs a special command to
@@ -448,6 +464,23 @@ Terminal.appでも問題なく表示できます)にするようにしました�
 テスト一式(折り返す入力・複数行にまたがる左矢印・矢印キーとの競合・Backspace・
 `stty size`が0 0を返す環境)もすべて、反転表示が加わった以外は変化なく通ることを
 確認しています。
+
+### 2026-09-08(もう一件)
+
+**修正:** PowerBook G4のログに、一見また別のターミナル描画バグに見えるものが
+映っていました — 「クリ」「クリー」「クリーム」「クリームと」…と1文字ずつ
+伸びていく行が、`claude>`の返答の間に何行も積み重なっている、というものです。
+これは実は描画のバグではありませんでした。Geminiの「思考」機能は、最終回答とは
+別に、途中の考えの過程を`thought: true`という印が付いた別のpartとして返して
+くることがあるのですが、応答を解析する側が`text`フィールドを持つpartを
+**全部まとめて**拾ってしまっていて、思考の途中経過もそのまま最終回答と同じ
+ように画面に出してしまっていました。モデルが心の中で「クリーム…いや、
+クリームと紅茶かな…」と考えている過程が、そのまま連続した行として画面に
+出ていた、ということです。`thought: true`が付いているpartは拾う前に読み飛ばす
+ように修正し、思考パートと最終回答パートが混在した応答を模したユニット
+テストで、最終回答だけが残ることを確認しました。
+
+3台すべてに配布し、配布用zipも作り直しました。
 
 ### 2026-09-08(続報その2)
 

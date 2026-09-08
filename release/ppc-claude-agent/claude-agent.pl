@@ -431,6 +431,15 @@ sub parse_response_gemini {
     my $candidate = $resp->{candidates} && $resp->{candidates}[0];
     my @blocks;
     for my $part (@{ ($candidate && $candidate->{content}{parts}) || [] }) {
+        # Geminiがthinking機能を使っている時、応答の中に「思考の途中経過」を
+        # 表す part が混ざって返ってくることがある(thought: trueの印が付く)。
+        # これは本来ユーザーに見せる最終回答ではなく内部の下書きなので、
+        # このまま素通しすると「クリ→クリー→クリーム→…」のように、考えが
+        # 変わるたびに書き直された跡がそのまま画面に出てしまう(実機の
+        # PowerBook G4でこの症状が報告され、原因はこれだと判明した)。
+        # thoughtSignature(継続のための署名)とは別物なので、こちらは
+        # 単純にスキップして最終回答のpartだけを拾う。
+        next if $part->{thought};
         if (defined $part->{text}) {
             my $block = { type => 'text', text => $part->{text} };
             $block->{thought_signature} = $part->{thoughtSignature} if defined $part->{thoughtSignature};
