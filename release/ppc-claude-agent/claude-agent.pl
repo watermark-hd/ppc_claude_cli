@@ -939,11 +939,49 @@ sub read_secret_or_cancel {
             # 始まった絶対行、CPRで取得済み)が分かっている時だけ判定できる。
             if (defined $start_row && $start_row + $end_row >= $term_rows) {
                 my $overflow = $start_row + $end_row - $term_rows + 1;
-                _debug_log(sprintf("[redraw] lazy headroom: send %d newline(s), start_row %d -> %d\n",
-                    $overflow, $start_row, $start_row - $overflow));
+                _debug_log(sprintf("[redraw] lazy headroom: send %d newline(s), start_row was %d\n",
+                    $overflow, $start_row));
                 print "\n" x $overflow, "\r";
-                $start_row -= $overflow;
-                $start_row = 1 if $start_row < 1;
+
+                # 改行を送った時、カーソルが画面の本当の最下段にまだ達して
+                # いなければ実際にはスクロールが起きず、ただ1行下に動くだけ
+                # で終わる。逆に既に最下段にいれば本当にスクロールし、これ
+                # までブロックの上にあった全ての内容(このブロック自身も
+                # 含む)の行番号が一斉に若くなる。実機のログでこの2つを
+                # 「必ずスクロールしたはず」と決め打ちして計算していたのが
+                # 原因の不具合が見つかった(スクロールが起きていないのに
+                # 基準行を1つずらしてしまい、次の再描画が本来より1行下に
+                # ずれて、古い行が消されずに残ったまま新しい行が重なって
+                # 見える)。相対移動(CUU)はスクロールの有無に関係なく必ず
+                # 正しく効くので、まず改行前の位置関係で「ブロック先頭のはず」
+                # の場所までカーソルを戻し、そこでCPRを使って絶対行を直接
+                # 測り直す — 推測ではなく実測に置き換えることで、スクロール
+                # した・していない両方のケースを区別なく正しく扱える。
+                # 戻る量は$cursor_display_rowだけでなく、たった今下に送った
+                # 改行の分($overflow)も足す必要がある。改行前にいた位置
+                # (ブロック先頭から$cursor_display_row行目)から、改行で
+                # さらに$overflow行下に動いているので、ブロック先頭まで
+                # 戻るにはその合計ぶん上に戻らないといけない(ここで
+                # $overflowを足し忘れて$cursor_display_rowぶんしか戻らず、
+                # 結局ブロック先頭より下でCPRを測ってしまい、かえって
+                # 症状が悪化するミスが実際にあった)。
+                my $back = $cursor_display_row + $overflow;
+                if ($back > 0) {
+                    print "\x1b[" . $back . "A";
+                }
+                my $measured = _query_cursor_row(\@pending);
+                if (defined $measured) {
+                    $start_row = $measured;
+                } else {
+                    # CPRが効かない環境向けの最終手段: 従来通りの推測
+                    $start_row -= $overflow;
+                    $start_row = 1 if $start_row < 1;
+                }
+                _debug_log(sprintf("[redraw] lazy headroom: start_row now %d (measured=%s)\n",
+                    $start_row, defined $measured ? $measured : 'undef'));
+                # 既にブロック先頭まで戻ってきているので、この下にある
+                # 「ブロック先頭まで戻す」処理を二重に行わないよう印を付ける。
+                $cursor_display_row = 0;
             }
 
             # 前回の再描画で「カーソルが実際にいた行」(ブロック先頭から数えて

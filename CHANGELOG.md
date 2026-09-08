@@ -39,6 +39,31 @@ tail bytes get wrapped in `\x1b[7m...\x1b[0m`. and the cursor-position math is u
 and reran the full existing regression suite (wrapping input, multi-row Left-arrow, arrow
 races, Backspace, zero-size stty) with no change in behavior beyond the added highlighting.
 
+### 2026-09-08 (yet one more)
+
+**Fixed:** Found the real cause of the "same question appears as 2-3 duplicate lines"
+reports, by replaying a real debug log's recorded escape sequences through a virtual
+terminal to see exactly what the user saw. It traced back to the lazy-headroom fix itself
+(from earlier today): when a growing line was about to reach the terminal's bottom row,
+the code printed the needed blank lines and *assumed* that always caused a real scroll -
+shifting every row's numbering up, including the input block's own start row, which it then
+adjusted for by arithmetic. But if the cursor wasn't already sitting at the very last row
+when those blank lines were sent (e.g. there was still exactly one free row below), printing
+them just used up that free row - no scroll happened - yet the code adjusted its bookkeeping
+as if one had. The next redraw then moved to "the block's start" one row short of where the
+actual content was, erased and reprinted only part of it, and left the old row behind -
+which a moment later got scrolled away for real, permanently baking in a duplicate.
+
+Fixed by no longer assuming: after sending the blank lines, move the cursor back (by a pure
+relative Cursor Up, which is correct whether or not a scroll actually happened) to where the
+block's start should be, and ask the terminal directly via CPR what row that actually is.
+Falls back to the old arithmetic only if CPR doesn't answer. Reproduced with a pty test that
+places a growing line so it hits the terminal's exact last row from various amounts of
+slack (0 and 1 free rows below) - confirmed the pre-fix code duplicates a line in both cases,
+confirmed today's fix is clean in both, and reran the full existing regression suite.
+
+Deployed to all three machines and repackaged the release zip.
+
 ### 2026-09-08 (one more)
 
 **Fixed:** A PowerBook G4 transcript showed something that looked, at first glance, like
@@ -464,6 +489,32 @@ Terminal.appでも問題なく表示できます)にするようにしました�
 テスト一式(折り返す入力・複数行にまたがる左矢印・矢印キーとの競合・Backspace・
 `stty size`が0 0を返す環境)もすべて、反転表示が加わった以外は変化なく通ることを
 確認しています。
+
+### 2026-09-08(さらにもう一件)
+
+**修正:** 「同じ質問が2〜3行に重複する」という報告の本当の原因を、実機のデバッグ
+ログに記録された送信内容を仮想端末に実際に流し込んで再現することで特定しました。
+原因は今日前半に入れた「遅延ヘッドルーム」の対策自体にありました: 伸びていく行が
+画面の最下段に達しそうになった時、必要な分だけ改行を送るのですが、そのコードは
+「改行を送った=必ず本当にスクロールが起きて、入力ブロックの開始行を含む全ての
+行番号が1つずつ若くなったはず」と決め打ちして、その分を計算で補正していました。
+しかし、改行を送った瞬間にカーソルがまだ画面の本当の最下段にいなかった場合
+(例えば、あと1行だけ余裕が残っていた場合)、その改行はただその余った1行を
+使うだけでスクロールは起きません。それなのにコードは「スクロールした」前提で
+補正してしまい、次の再描画が本来の位置より1行ズレた場所で「ブロックの先頭」と
+誤認識してしまいます。結果、古い行を消しきれずに新しい行をその下に重ねて
+印字してしまい、少し後で本当にスクロールが起きた時に、その古い行がそのまま
+スクロールバックに焼き付いて重複して見える、という仕組みでした。
+
+「必ずこうなるはず」という決め打ちをやめ、改行を送った後に相対的なカーソル上移動
+(スクロールが起きていてもいなくても正しく効く)でブロックの先頭に戻り、そこで
+改めてCPRで「今本当は何行目にいるか」を端末に直接尋ねるように直しました。CPRに
+応答がない環境でのみ、従来通りの計算に頼ります。伸びていく行がちょうど画面の
+最下段に達する状況を、余裕0行・1行の両方でわざと作るptyテストを書いて、修正前の
+コードでは両方とも重複が再現し、修正後はどちらもきれいに直ることを確認し、既存の
+回帰テスト一式も全て通ることを確認しました。
+
+3台すべてに配布し、配布用zipも作り直しました。
 
 ### 2026-09-08(もう一件)
 
