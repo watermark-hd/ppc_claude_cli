@@ -593,10 +593,14 @@ sub read_secret_or_cancel {
             $dt = defined $_dbg_last_t ? sprintf('+%.3f ', $now - $_dbg_last_t) : '+0.000 ';
             $_dbg_last_t = $now;
         }
-        for my $line (@_) {
-            $line =~ s/^/$dt/mg if $dt ne '';
-            print $fh $line;
-        }
+        # @_ の要素は呼び出し側の引数のエイリアスで、文字列リテラルが
+        # そのまま渡ってくることもある。それを直接 s/// で書き換えると
+        # 「Modification of a read-only value attempted」で落ちる
+        # (実際に一度これでプログラムが起動直後に死んだ)。必ず新しい
+        # 変数にコピーしてから加工する。
+        my $msg = join('', @_);
+        $msg =~ s/^/$dt/mg if $dt ne '';
+        print $fh $msg;
         close $fh;
     }
 

@@ -9,6 +9,22 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-10 (hotfix)
+
+**Fixed:** v1.3.4 crashed on startup on any machine with `CLAUDE_DEBUG_INPUT` set - which is
+every machine currently under test. The new elapsed-time stamping in the debug logger did
+`s/^/.../mg` directly on the elements of `@_`, which are aliases to the caller's arguments;
+several call sites pass string literals, and modifying a read-only literal dies with
+"Modification of a read-only value attempted". The die happened right after the prompt was
+printed and before the terminal was restored, so it dropped the user back to a shell still
+in raw / no-echo mode - which looks like a stuck password prompt, and relaunching just
+crashed the same way. (The regression tests missed it because they don't set
+`CLAUDE_DEBUG_INPUT`, so the logger returned early and never reached the bad line.) Fixed by
+building the prefixed string in a fresh variable (`join('', @_)` then substitute) instead of
+touching `@_`. Added a test that runs the program with `CLAUDE_DEBUG_INPUT` set and confirms
+no read-only die. If you hit the stuck state: close the Terminal window and open a new one
+(or blind-type `stty sane` + Return), then relaunch.
+
 ### 2026-09-10 (later still)
 
 **Fixed (tentative, pending a real-hardware log):** On the PowerBook G4, pausing mid-sentence
@@ -506,6 +522,23 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-10(緊急修正)
+
+**修正:** v1.3.4は、`CLAUDE_DEBUG_INPUT` が設定されているマシン(今テスト中の
+実機は全部そう)で、起動直後に落ちるバグがありました。デバッグログに経過秒を
+付ける処理で、`@_`(呼び出し側の引数のエイリアス。文字列リテラルがそのまま
+渡ってくる箇所がある)を直接 `s///` で書き換えていて、読み取り専用の値を
+書き換えようとして「Modification of a read-only value attempted」で死んでいました。
+死ぬのがプロンプトを表示した直後・端末設定を戻す前だったので、rawモード/echo
+オフのままシェルに戻り、それが「パスワードを求められる画面で固まっている」ように
+見え、`advisor` で入れ直しても同じ場所でまた落ちる、という状態でした
+(回帰テストがこれを見逃したのは、テストが `CLAUDE_DEBUG_INPUT` を設定して
+おらず、ログ関数が早期returnして問題の行に到達しなかったためです)。新しい変数に
+コピー(`join('', @_)` してから加工)するように直しました。`CLAUDE_DEBUG_INPUT` を
+設定した状態でプログラムを動かして落ちないことを確認するテストも追加しました。
+固まった状態になったら: ターミナルのウィンドウを閉じて新しく開き直す(または
+見えないまま `stty sane` と打ってReturn)、そのあと起動し直してください。
 
 ### 2026-09-10(さらに続き)
 
