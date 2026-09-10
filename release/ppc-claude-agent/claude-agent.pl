@@ -1166,7 +1166,33 @@ sub read_secret_or_cancel {
                 }
                 substr($buf, $pos, 0) = $char;
                 $pos += length($char);
-                $redraw->();
+
+                # 速い経路: カーソルが行末(純粋な追記で、途中への挿入では
+                # ない)で、かつ今回の1文字では行の折り返しも画面末尾よけの
+                # 改行挿入も起きないと分かっている時は、行全体を消して描き
+                # 直すのではなく、その1文字だけをそのまま print する。
+                # 毎キーストロークで全再描画すると、遅い実機では入力のたびに
+                # 目の前の行が一瞬で総書き換えされてチラつき、どこを読めば
+                # いいのか・カーソルがどこかを見失う原因になる(実機の
+                # PowerBook G4で報告された)。折り返し・挿入・矢印・履歴・
+                # Backspace など、位置がずれる操作の時だけ従来通り $redraw
+                # する。
+                my $fast = 0;
+                if ($pos == length($buf)) {
+                    my $new_full = $redraw_prompt . decode('UTF-8', $buf, FB_DEFAULT);
+                    my ($nr, $nc) = _walk_position($new_full, $term_cols);
+                    if ($nr == $rows_used - 1                    # 行数が増えない
+                        && $nc <= $term_cols - 2                 # 折り返し待ちにならない
+                        && !(defined $start_row
+                             && $start_row + $nr >= $term_rows)) # 画面末尾よけ不要
+                    {
+                        print decode('UTF-8', $char, FB_DEFAULT);
+                        $cursor_display_row = $nr;
+                        _debug_log(sprintf("[fast] append 1 char, pos=%d nc=%d\n", $pos, $nc));
+                        $fast = 1;
+                    }
+                }
+                $redraw->() unless $fast;
             }
         }
 

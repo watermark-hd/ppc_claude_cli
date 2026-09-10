@@ -9,6 +9,24 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-10
+
+**Changed:** On a real PowerBook G4, ordinary typing felt disorienting - the whole input
+line appeared to blank and repaint on every single keystroke, fast enough that it was hard
+to tell where to start reading, and a long line could look like it was jumping around or
+scrolling its own start off the top of the window. Cause: the line editor did a full
+"return to start of block, erase to end of screen, reprint the whole prompt + buffer" on
+*every* keypress, including the common case of just adding one character at the end. On a
+fast terminal that's invisible; on a G4 you see every repaint. Added a fast path: when a
+character is simply appended at the end of the line and it does not cause a wrap, does not
+land in the last column, and does not need a screen-bottom newline, the editor now just
+prints that one character and lets the cursor advance naturally - no erase, no reprint,
+nothing else moves. Everything that actually shifts position (wrapping, inserting mid-line,
+Backspace, arrow keys, history recall) still does the full redraw as before. Measured on a
+60-column pty: typing 15 characters went from 584 bytes with 16 full-screen clears down to
+16 bytes with zero clears. Verified the wrap / Backspace / arrow-insert hand-off still
+renders correctly and the full existing regression suite still passes.
+
 ### 2026-09-08
 
 **Investigated:** A report from real PowerBook G4 hardware describing text appearing "in
@@ -457,6 +475,25 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-10
+
+**変更:** 実機のPowerBook G4で普通に文字を打っていると、目が落ち着かない
+という指摘がありました。1文字打つたびに入力行全体が一瞬で消えて描き直されて
+いるように見え、それが速すぎて「どこから読めばいいのか」が分からず、長い行だと
+行の先頭が画面の上に流れて消えていくようにも見える、というものです。原因は、
+行編集が「ブロックの先頭に戻る→画面末尾まで消す→プロンプトと入力内容を丸ごと
+描き直す」という全再描画を、行末に1文字足しただけの一番よくある場合も含めて
+毎キーストロークやっていたことです。速い端末では見えませんが、G4ではその
+描き直しが1回1回見えてしまいます。速い経路を追加しました: 行末への単純な
+追記で、折り返しも起きず、行の最後のマスにも入らず、画面末尾よけの改行も
+要らないと分かっている時は、その1文字だけをそのまま print してカーソルを
+自然に進めるだけにします — 消去も描き直しもせず、他は何も動きません。位置が
+実際にずれる操作(折り返し・行の途中への挿入・Backspace・矢印キー・履歴呼び
+出し)は今まで通り全再描画します。60桁のptyで測ったところ、15文字打つ間の
+出力が「584バイト・全画面消去16回」から「16バイト・全画面消去0回」に
+なりました。折り返し・Backspace・矢印での挿入の受け渡しが正しく描画される
+ことと、既存の回帰テスト一式が全て通ることを確認済みです。
 
 ### 2026-09-08
 
