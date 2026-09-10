@@ -9,6 +9,22 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-10 (later)
+
+**Fixed:** Fragments like `;59R` kept appearing in the middle of typed lines on the
+PowerBook G4 - often enough that the fix for now was to delete them and retype. These are
+pieces of a cursor-position report (`ESC [ row ; col R`): when prompts start back to back,
+the terminal's late reply to a position query we sent can arrive after we've given up
+waiting, and land in the next line's input. The pushback logic keeps the `ESC [` prefix
+together, but the main input loop only special-cased `ESC [ 3 ~` (the Delete key) - anything
+else starting with `ESC [` and a digit fell through, and its remaining bytes (`;`, `5`,
+`9`, `R`) got inserted as literal text. Rewrote that branch to parse a full CSI sequence:
+collect the `[0-9;]` parameters up to the final byte, act on it only if it's `ESC [ 3 ~`
+(Delete), and otherwise swallow the whole thing - so a stray `ESC [ 32 ; 59 R`, whole or
+split across the pushback boundary, is consumed and ignored instead of corrupting the line.
+Verified with a test that injects both whole and split stray reports mid-typing (buffer
+stays clean) and that the Delete key still works, plus the full regression suite.
+
 ### 2026-09-10
 
 **Changed:** On a real PowerBook G4, ordinary typing felt disorienting - the whole input
@@ -475,6 +491,23 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-10(続き)
+
+**修正:** PowerBook G4で、打っている行の途中に `;59R` のような断片がよく
+現れていました(頻度が高く、当面は消して打ち直すという対処になっていました)。
+これはカーソル位置応答(`ESC [ 行 ; 桁 R`)の一部です。プロンプトが立て続けに
+始まると、こちらが送った位置問い合わせへの端末からの返事が、待つのをやめた後に
+遅れて届き、次の行の入力に紛れ込みます。読み戻し処理は `ESC [` の部分は
+まとめて戻すのですが、メインの入力ループが特別扱いしていたのは `ESC [ 3 ~`
+(Deleteキー)だけで、それ以外の「`ESC [` の後に数字」で始まるものは素通りし、
+残りのバイト(`;` `5` `9` `R`)がそのまま文字として行に入っていました。この
+分岐を、CSIシーケンス全体をきちんと解釈するように書き直しました: `[0-9;]` の
+パラメータを終端文字まで集め、`ESC [ 3 ~`(Delete)の時だけ処理し、それ以外は
+まるごと読み捨てます。これで、紛れ込んだ `ESC [ 32 ; 59 R` が、丸ごとでも
+読み戻しの境目で分割されていても、行を壊さずに消費されます。丸ごと/分割の
+両方の紛れ込みを入力中に注入するテストでバッファがきれいなままなこと、Delete
+キーが今まで通り効くこと、既存の回帰テスト一式が通ることを確認済みです。
 
 ### 2026-09-10
 

@@ -1134,12 +1134,34 @@ sub read_secret_or_cancel {
                             $redraw->();
                         }
                     }
-                    elsif ($c3 eq '3') {         # Delete キー (ESC [ 3 ~)
-                        my $c4 = $read_byte->();
-                        if (defined $c4 && $pos < length($buf)) {
-                            substr($buf, $pos, _utf8_char_len(substr($buf, $pos, 1)), '');
-                            $redraw->();
+                    elsif ($c3 =~ /[0-9;]/) {
+                        # ESC [ <数字やセミコロン...> <終端文字> の形。
+                        # 数字/セミコロンを終端文字が来るまで集める。
+                        my $params = $c3;
+                        my $final;
+                        while (1) {
+                            my $cx = $read_byte->();
+                            last unless defined $cx;
+                            if ($cx =~ /[0-9;]/) { $params .= $cx; next; }
+                            $final = $cx;
+                            last;
                         }
+                        if (defined $final && $final eq '~' && $params eq '3') {
+                            # Delete キー (ESC [ 3 ~)
+                            if ($pos < length($buf)) {
+                                substr($buf, $pos, _utf8_char_len(substr($buf, $pos, 1)), '');
+                                $redraw->();
+                            }
+                        }
+                        # それ以外(特に $final eq 'R' = カーソル位置応答 CPR の
+                        # 紛れ込み)は、まるごと読み捨てる。プロンプトが立て続けに
+                        # 始まった時などに、こちらが送った位置問い合わせへの
+                        # 端末からの遅れた応答("\x1b[32;59R" など)が入力に
+                        # 混ざることがあり、以前はその一部("これ;59R"など)が
+                        # そのまま文字として行に入っていた。ここで CSI シーケンス
+                        # 全体を消費してしまえば、文字化けせず素通りできる。
+                        _debug_log(sprintf("[input] swallowed CSI: ESC [ %s %s\n",
+                            $params, defined $final ? $final : '(eof)'));
                     }
                 }
             }
