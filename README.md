@@ -12,6 +12,9 @@ PowerPC support years ago, so it can't run there directly. Instead, this project
 curl** — either Anthropic (Claude) or, as of the latest version, Google's Gemini API,
 which has a free tier that needs no credit card at all.
 
+**Discussion & support:** [MacRumors PowerPC forum thread](https://forums.macrumors.com/threads/i-got-claude-ai-running-natively-on-a-powerpc-ibook-g4-tiger.2487484/)
+· **Downloads:** [Releases](https://github.com/watermark-hd/ppc_claude_cli/releases)
+
 ### Tested environment
 
 - iBook G4 (PowerBook6,5), ~1.2GHz CPU, 1.25GB RAM
@@ -211,6 +214,9 @@ community that keeps old machines alive and useful.
 公式の Claude Code CLI は Node.js (18+) が前提で、V8 が PowerPC 対応を打ち切っているため直接は動きません。
 そこで **curl 経由でAI APIを直接叩く自己完結型の軽量エージェント** を Perl で実装しています。使うAPIは
 Anthropic (Claude) か、最新版で対応したGoogleのGemini API(クレジットカード不要の無料枠あり)から選べます。
+
+**議論・サポート:** [MacRumors PowerPC板のスレッド](https://forums.macrumors.com/threads/i-got-claude-ai-running-natively-on-a-powerpc-ibook-g4-tiger.2487484/)
+・**ダウンロード:** [Releases](https://github.com/watermark-hd/ppc_claude_cli/releases)
 
 ### 動作確認環境
 
