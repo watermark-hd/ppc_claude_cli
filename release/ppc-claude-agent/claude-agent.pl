@@ -580,10 +580,23 @@ sub read_secret_or_cancel {
     # デバッグ用: $ENV{CLAUDE_DEBUG_INPUT}にファイルパスを設定すると、
     # read_line_interactiveが実際に受け取った生バイトを1行ずつ追記する。
     # 実機でIME入力時に何が届いているか調べるための一時的な仕組み。
+    my $_dbg_last_t;
     sub _debug_log {
         return unless $ENV{CLAUDE_DEBUG_INPUT};
         open(my $fh, '>>', $ENV{CLAUDE_DEBUG_INPUT}) or return;
-        print $fh @_;
+        # 各行の先頭に「前回のログからの経過秒」を付ける。IME確定の直後に
+        # 勝手にEnterが入るのか、それとも間が空いてから入るのか(=別経路)を
+        # 切り分けるため。Time::HiResはPerl 5.8のコアなので追加依存にならない。
+        my $dt = '';
+        if (eval { require Time::HiRes; 1 }) {
+            my $now = Time::HiRes::time();
+            $dt = defined $_dbg_last_t ? sprintf('+%.3f ', $now - $_dbg_last_t) : '+0.000 ';
+            $_dbg_last_t = $now;
+        }
+        for my $line (@_) {
+            $line =~ s/^/$dt/mg if $dt ne '';
+            print $fh $line;
+        }
         close $fh;
     }
 
@@ -1052,10 +1065,17 @@ sub read_secret_or_cancel {
         # この合図のバイト自体がゴミとして文字列に混入し、UTF-8が壊れて
         # 文字化けする。ここで0x16を読み飛ばし、次のバイトを本来のデータ
         # として扱う。
+        my $last_was_lnext = 0;   # 直前のバイトが 0x16(LNEXT)経由で来たか
         my $read_byte = sub {
             my $ch = $read_one_byte->();
             if (defined $ch && $ch eq "\x16") {
                 $ch = $read_one_byte->();
+                $last_was_lnext = 1;
+                _debug_log(sprintf("  (LNEXT 0x16 skipped, next byte: %s)\n",
+                    defined $ch ? sprintf('%02x', ord($ch)) : 'eof'));
+            }
+            else {
+                $last_was_lnext = 0;
             }
             return $ch;
         };
@@ -1072,6 +1092,19 @@ sub read_secret_or_cancel {
             _debug_log(sprintf("byte: %02x (%s)\n", $b, ($b >= 0x20 && $b < 0x7f) ? chr($b) : ''));
 
             if ($b == 13 || $b == 10) {       # Enter
+                # 0x16(LNEXT)にくるまれて届いた改行は、ユーザーが送信の
+                # つもりで押したEnterではなく、IME(日本語変換)の確定操作が
+                # そのまま端末に流れてきたもの。実機のTerminal.appは確定した
+                # テキストを 0x16 付きで1バイトずつ送ってくるため、変換候補を
+                # 選んでいる途中に確定すると、その確定Enterが行の送信として
+                # 扱われて「勝手に回答が始まる」ことがあった。くるまれて
+                # いる改行は送信とみなさず読み飛ばす(この1行プロンプトでは
+                # 途中の改行そのものに意味はない)。素のEnter(0x16なし)は
+                # 今まで通り送信。
+                if ($last_was_lnext) {
+                    _debug_log("-> newline via LNEXT: treated as IME-commit, not submit\n");
+                    next RAW_LOOP;
+                }
                 _debug_log(sprintf("-> ENTER, buf hex=%s\n", unpack('H*', $buf)));
                 print "\r\n";
                 $result = $buf;

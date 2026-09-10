@@ -9,6 +9,21 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-10 (later still)
+
+**Fixed (tentative, pending a real-hardware log):** On the PowerBook G4, pausing mid-sentence
+to think - e.g. while choosing an IME conversion candidate - could make the line submit on
+its own and the assistant start answering. Tiger's Terminal.app delivers IME-committed text
+one byte at a time, each byte preceded by `0x16` (LNEXT); the theory is that the Return that
+confirms a conversion is passed through the same way, wrapped in `0x16`, and the input loop
+saw a bare newline and treated it as "send". Added: a newline that arrived via the `0x16`
+escape is treated as part of an IME commit, not as submit, and is ignored (a mid-line
+newline has no meaning in this single-line prompt anyway). A plain Return with no `0x16`
+still submits as before. Also added elapsed-time stamps to the debug log and logging of the
+`0x16` skips, so the next captured log will confirm whether this is the actual mechanism or
+whether the stray newline arrives unwrapped after a delay (which would point at the
+cooked-mode window between turns instead).
+
 ### 2026-09-10 (later)
 
 **Fixed:** Fragments like `;59R` kept appearing in the middle of typed lines on the
@@ -491,6 +506,20 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-10(さらに続き)
+
+**修正(暫定・実機ログ待ち):** PowerBook G4で、文の途中で考え込む(例えばIMEの
+変換候補を選んでいる)と、行が勝手に送信されて回答が始まってしまうことが
+ありました。TigerのTerminal.appはIMEで確定したテキストを1バイトずつ、各バイトの
+前に `0x16`(LNEXT)を付けて送ってきます。おそらく変換を確定するEnterも同じように
+`0x16` にくるまれて流れてきていて、入力ループがそれをただの改行=「送信」と
+解釈していた、という見立てです。対策として、`0x16` 経由で届いた改行はIME確定の
+一部とみなして送信扱いにせず読み飛ばすようにしました(この1行プロンプトでは
+途中の改行に意味はありません)。`0x16` の付かない素のEnterは今まで通り送信します。
+あわせて、デバッグログに各行の経過秒と `0x16` の読み飛ばしを記録するようにした
+ので、次に取れるログで、これが本当の原因なのか、それとも遅れて素の改行が届いて
+いる(=ターン間のcookedモードの隙間が原因)のかがはっきりします。
 
 ### 2026-09-10(続き)
 
