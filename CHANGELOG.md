@@ -9,6 +9,17 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-10 (guided key setup: bilingual)
+
+**Changed:** The first-run Gemini key walkthrough was Japanese only. It's the first thing a
+new user sees and the point people give up at, and the forum thread this is shared from is
+in English - so it now prints English first, then Japanese: the numbered steps, the
+browser-open prompt, the paste prompt, and every result / error line ("key works", "key
+rejected", "API not enabled", "could not reach the API", "saved", "could not save"). The
+docs URL dropped its `hl=ja` so the page opens in the browser's own language, and each
+language block names the buttons as they appear on that language's page. No behavior change
+- same steps, same validation, same save-to-`~/.claude-agent-env`.
+
 ### 2026-09-10 (guided Gemini key setup)
 
 **Added:** Getting a Gemini API key was the point most people gave up at. Launching with
@@ -550,6 +561,17 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-10(キー取得の案内を日英併記に)
+
+**変更:** 初回起動のGeminiキー案内が日本語だけでした。新規ユーザーが最初に
+見る・一番挫けるポイントで、しかもこれを共有しているフォーラムのスレッドは
+英語なので、英語→日本語の順で出すようにしました: 番号付きの手順、ブラウザを
+開くかの確認、貼り付け欄、そして結果・エラーの各行(「キーが使えた」「キーが
+拒否された」「APIが未有効」「APIに接続できない」「保存した」「保存できない」)。
+ドキュメントのURLから `hl=ja` を外して、ページはブラウザの言語で開くように
+しました。各言語ブロックでは、その言語のページに出るボタン名を書いています。
+挙動は変わりません(手順・検証・`~/.claude-agent-env` への保存は同じ)。
 
 ### 2026-09-10(Gemini APIキー取得の案内)
 
