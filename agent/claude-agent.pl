@@ -516,6 +516,26 @@ sub confirm {
     return defined($ans) && $ans =~ /^y/i;
 }
 
+# 回答をタイプライター風に少しずつ表示する。速い端末だと一気に流れて
+# 読めない、という実機(PowerBook G4)の声への対応。CLAUDE_TYPE_DELAY
+# (1文字あたりの秒数)で速さを調整でき、0 にすると即時表示(従来の
+# 挙動)に戻る。改行では少し長めに止めて、行が「置かれた」感じを出す。
+# select(undef,undef,undef,$t) は Time::HiRes なしで使える小数秒スリープ。
+sub slow_print {
+    my ($text) = @_;
+    my $delay = $ENV{CLAUDE_TYPE_DELAY};
+    $delay = 0.006 unless defined $delay && $delay ne '';
+    $delay = 0 + $delay;
+    if ($delay <= 0) {
+        print $text;
+        return;
+    }
+    for my $ch (split //, $text) {
+        print $ch;
+        select(undef, undef, undef, $ch eq "\n" ? $delay * 12 : $delay);
+    }
+}
+
 # APIキーのような秘密の値を1行、画面に表示せずに読み取る。
 # read_line_interactiveと違い矢印キー入力には対応せず(APIキーの貼り付け
 # だけを想定)、代わりにEscかCtrl+Cのどちらか1発でその場でundefを返して
@@ -1382,7 +1402,8 @@ while (1) {
         my @tool_results;
         for my $block (@content_blocks) {
             if ($block->{type} eq 'text') {
-                print "\nclaude> $block->{text}\n";
+                print "\nclaude> ";
+                slow_print("$block->{text}\n");
             }
             elsif ($block->{type} eq 'tool_use') {
                 print "\n[tool_use] $block->{name}(" . MiniJSON::encode($block->{input}) . ")\n";

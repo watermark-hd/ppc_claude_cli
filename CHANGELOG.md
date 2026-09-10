@@ -9,6 +9,17 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-10 (typewriter output)
+
+**Added:** The assistant's replies now print character by character, typewriter style,
+instead of dumping all at once. On a fast terminal a long answer scrolled past before you
+could start reading it; the PowerBook G4 request was for something gentler. Default pace is
+6 ms per character with a longer pause at each line break so lines "land". Tunable with
+`CLAUDE_TYPE_DELAY` (seconds per character); set it to `0` for the old instant printing.
+Only the answer text is paced - the `claude> ` prefix, tool-use lines, and status messages
+stay instant. Uses `select(undef,undef,undef,delay)` for the sub-second sleep, no extra
+dependency.
+
 ### 2026-09-10 (hotfix)
 
 **Fixed:** v1.3.4 crashed on startup on any machine with `CLAUDE_DEBUG_INPUT` set - which is
@@ -522,6 +533,17 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-10(タイプライター表示)
+
+**追加:** AIの回答を、一気に出すのではなく1文字ずつタイプライター風に
+表示するようにしました。速い端末だと長い回答が読み始める前に流れて
+しまう、というPowerBook G4からの要望への対応です。既定は1文字あたり
+6ミリ秒で、改行では少し長めに止めて行が「置かれた」感じを出します。
+`CLAUDE_TYPE_DELAY`(1文字あたりの秒数)で速さを調整でき、`0` にすると
+従来の即時表示に戻ります。ゆっくり表示するのは回答本文だけで、`claude> `
+の見出し・ツール実行の行・状態メッセージは即時のままです。小数秒スリープは
+`select(undef,undef,undef,秒)` を使っていて、追加の依存はありません。
 
 ### 2026-09-10(緊急修正)
 
