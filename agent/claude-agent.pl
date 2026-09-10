@@ -71,7 +71,29 @@ sub configure_provider {
     $PROVIDER = $provider;
 }
 
-configure_provider($ENV{CLAUDE_PROVIDER} || 'anthropic');
+# プロバイダ決定: 明示指定が無ければ、Anthropicのキーがあればそちら、
+# 無ければ Gemini(無料枠。新規ユーザーはこちらに誘導する)。
+my $_want_provider = $ENV{CLAUDE_PROVIDER};
+if (!defined $_want_provider || $_want_provider eq '') {
+    $_want_provider = $ENV{ANTHROPIC_API_KEY} ? 'anthropic' : 'gemini';
+}
+unless (eval { configure_provider($_want_provider); 1 }) {
+    my $err = $@ || "設定エラー\n";
+    # Geminiのキーが無いまま起動された時だけ、取得を手順付きで案内する。
+    # それ以外(Anthropicキー未設定、不明なプロバイダ等)は従来通りdie。
+    if ($_want_provider eq 'gemini' && !$ENV{GEMINI_API_KEY}) {
+        my $key = gemini_key_setup();
+        unless (defined $key && $key ne '') {
+            print "\nAPIキーが設定されなかったため終了します。\n";
+            exit 1;
+        }
+        $ENV{GEMINI_API_KEY} = $key;
+        configure_provider('gemini');
+    }
+    else {
+        die $err;
+    }
+}
 
 my $SYSTEM_PROMPT = <<'EOS';
 You are a lightweight coding assistant running in the terminal of a
@@ -533,6 +555,168 @@ sub slow_print {
     for my $ch (split //, $text) {
         print $ch;
         select(undef, undef, undef, $ch eq "\n" ? $delay * 12 : $delay);
+    }
+}
+
+# ------------------------------------------------------------------
+# Gemini APIキー取得支援(キーが無いまま起動された時)
+# ------------------------------------------------------------------
+# 番号付きの手順を表示し、希望すればブラウザで取得ページを開き、貼り
+# 付けられたキーをその場で実際にAPIへ投げて検証する。成功したらキー
+# 文字列を返す(呼び出し側が $ENV{GEMINI_API_KEY} にセットして
+# configure_provider を呼ぶ)。中止・失敗時は undef。
+sub gemini_key_setup {
+    my $url = 'https://ai.google.dev/gemini-api/docs/api-key?hl=ja';
+    print <<"GUIDE";
+
+──────────────────────────────────────────────
+ Gemini APIキーの取得(無料・クレジットカード登録不要)
+──────────────────────────────────────────────
+ まだ GEMINI_API_KEY が設定されていません。次の手順で無料のキーが
+ 取れます。
+
+  1. ブラウザで下のページを開く:
+       $url
+
+  2. 右上の「ログイン」からGoogleアカウントでログイン
+
+  3. 青いボタン「Gemini API キーを作成または表示する」をクリック
+     → Google AI Studio の「API キー」ページに移動します
+
+  4. 右上の「API キーを作成」をクリック
+
+  5. 「新しいキーを作成する」ダイアログはそのままでOK
+       ・キー名       … そのまま(例: PPC Mac)
+       ・プロジェクト … 「Default Gemini Project」のまま
+     「キーを作成」をクリック
+
+  6. 表示された AIza… で始まる文字列をコピー
+
+GUIDE
+
+    if (-x '/usr/bin/open') {
+        print "  このページを今すぐブラウザで開きますか? [Y/n] ";
+        my $a = read_line_interactive('', 0);
+        return undef unless defined $a;
+        if ($a !~ /^\s*n/i) {
+            my $rc = system('open', $url);
+            print $rc == 0
+                ? "  → 開きました。\n"
+                : "  → 自動では開けませんでした。上のURLを手で開いてください。\n";
+        }
+    }
+
+    for my $attempt (1 .. 3) {
+        my $key = read_secret_or_cancel(
+            "\n  取得したキーを貼り付けて Enter(Esc または Ctrl+C で中止)\n  APIキー> ");
+        return undef unless defined $key;
+        $key =~ s/\A[\s"']+//;
+        $key =~ s/[\s"']+\z//;
+        if ($key eq '') {
+            print "  何も入力されていません。\n";
+            next;
+        }
+        if ($key !~ /\AAIza[0-9A-Za-z_\-]{20,}\z/) {
+            print "  ※ Gemini のキー(AIza… で始まる約39文字)と形が違うようです。\n";
+            print "     それでも試しますか? [y/N] ";
+            my $a = read_line_interactive('', 0);
+            next unless defined $a && $a =~ /^\s*y/i;
+        }
+
+        print "  キーを確認しています...\n";
+        my ($status, $detail) = _validate_gemini_key($key);
+        if ($status eq 'ok') {
+            print "  ✓ このキーで接続できました。\n";
+            _maybe_save_gemini_key($key);
+            return $key;
+        }
+        elsif ($status eq 'skip') {
+            print "  (検証はスキップしました: $detail)\n";
+            _maybe_save_gemini_key($key);
+            return $key;
+        }
+        elsif ($status eq 'bad_key') {
+            print "  ✗ このキーは受け付けられませんでした($detail)。\n";
+            print "     コピーミスがないか、キー全体が入っているか確認してください。\n";
+        }
+        elsif ($status eq 'api_disabled') {
+            print "  ✗ キーは有効ですが Generative Language API が有効になっていません($detail)。\n";
+            print "     AI Studio でキーを作り直すか、少し待ってから再度お試しください。\n";
+        }
+        else {
+            print "  ✗ 接続を確認できませんでした($detail)。\n";
+            print "     ネットワークに繋がっているか確認してください。\n";
+        }
+        print "  (残り " . (3 - $attempt) . " 回)\n" if $attempt < 3;
+    }
+    print "\n  キーの設定に成功しませんでした。\n";
+    return undef;
+}
+
+# 貼り付けられたキーを Generative Language API のモデル一覧エンドポイントに
+# 投げて有効性を確認する。戻り値: ('ok'|'bad_key'|'api_disabled'|'network'|'skip', 詳細)
+sub _validate_gemini_key {
+    my ($key) = @_;
+    return ('skip', 'curl が見つかりません')       unless -x $CURL;
+    return ('skip', '証明書ファイルが見つかりません') unless -f $CACERT;
+
+    my $tmp_resp   = "/tmp/claude-agent-keychk-resp-$$.json";
+    my $tmp_config = "/tmp/claude-agent-keychk-cfg-$$.txt";
+    open(my $cf, '>', $tmp_config) or return ('network', "一時ファイルを作れません: $!");
+    chmod 0600, $tmp_config;
+    print $cf qq(url = "https://generativelanguage.googleapis.com/v1beta/models"\n);
+    print $cf qq(header = "x-goog-api-key: $key"\n);
+    print $cf qq(cacert = "$CACERT"\n);
+    print $cf qq(output = "$tmp_resp"\n);
+    print $cf qq(write-out = "%{http_code}"\n);
+    print $cf qq(max-time = "20"\n);
+    print $cf qq(silent\n);
+    print $cf qq(show-error\n);
+    close $cf;
+
+    my $http = `@{[quote($CURL)]} -K @{[quote($tmp_config)]} 2>/dev/null`;
+    unlink $tmp_config;
+    my $body = '';
+    if (open(my $rf, '<', $tmp_resp)) { local $/; $body = <$rf>; close $rf; }
+    unlink $tmp_resp;
+    $body = '' unless defined $body;
+    $http = '' unless defined $http;
+
+    return ('ok', "HTTP $http")            if $http =~ /^2\d\d$/;
+    return ('network', 'curl が応答を得られませんでした') if $http eq '' || $http eq '000';
+    return ('bad_key', "HTTP $http")       if $body =~ /API_KEY_INVALID/ || $http eq '400';
+    return ('api_disabled', "HTTP $http")  if $body =~ /SERVICE_DISABLED|PERMISSION_DENIED|has not been used|is disabled/;
+    return ('bad_key', "HTTP $http");
+}
+
+# キーを ~/.claude-agent-env に保存するか尋ね、承諾なら既存の
+# GEMINI_API_KEY 行を除いてから追記する。
+sub _maybe_save_gemini_key {
+    my ($key) = @_;
+    print "\n  このキーを $ENV_FILE_PATH に保存して、次回から入力せずに使えるようにしますか? [Y/n] ";
+    my $a = read_line_interactive('', 0);
+    return unless defined $a;
+    return if $a =~ /^\s*n/i;
+
+    my @keep;
+    if (open(my $rf, '<', $ENV_FILE_PATH)) {
+        while (my $l = <$rf>) {
+            next if $l =~ /^\s*export\s+GEMINI_API_KEY=/;
+            push @keep, $l;
+        }
+        close $rf;
+    }
+    push @keep, "export GEMINI_API_KEY=$key\n";
+    if (open(my $wf, '>', $ENV_FILE_PATH)) {
+        print $wf @keep;
+        close $wf;
+        chmod 0600, $ENV_FILE_PATH;
+        print "  → 保存しました。次回からは自動で読み込まれます。\n";
+    }
+    else {
+        print "  → 保存できませんでした($ENV_FILE_PATH に書けません)。\n";
+        print "     手動で次の行を追加してください:\n";
+        print "       export GEMINI_API_KEY=$key\n";
     }
 }
 

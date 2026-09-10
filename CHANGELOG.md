@@ -9,6 +9,23 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-10 (guided Gemini key setup)
+
+**Added:** Getting a Gemini API key was the point most people gave up at. Launching with
+`CLAUDE_PROVIDER=gemini` and no key used to just print one line and quit. Now it walks you
+through it: a numbered checklist (open this page → sign in → the blue "create or view API
+key" button → "Create API key" → the create-key dialog, leave the defaults → copy the
+`AIza…` string), an offer to open the page in your browser (`open`, works on Tiger too),
+then a paste prompt that trims stray whitespace/quotes, sanity-checks the shape, and
+actually calls the Generative Language API to verify the key before accepting it - reporting
+"wrong key", "API not enabled", or "no connection" separately. On success it offers to save
+the key into `~/.claude-agent-env` (replacing any old line, not stacking), so the next
+launch is silent. If the bundled curl isn't reachable the verification step is skipped
+rather than blocking. A brand-new run with no provider and no keys of any kind now heads
+into this flow instead of the Anthropic-key error. There is no way to mint a key without a
+Google browser login - no API exists for that - so this is the guided-manual path, not
+automation.
+
 ### 2026-09-10 (typewriter output)
 
 **Added:** The assistant's replies now print character by character, typewriter style,
@@ -533,6 +550,24 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-10(Gemini APIキー取得の案内)
+
+**追加:** Gemini APIキーの取得が、みんなが一番挫けるところでした。今までは
+`CLAUDE_PROVIDER=gemini` でキーが無いまま起動すると、1行メッセージを出して
+終わるだけでした。これを手順付きの案内に変えました: 番号付きチェックリスト
+(このページを開く → ログイン → 青い「Gemini API キーを作成または表示する」
+ボタン → 「API キーを作成」→ 作成ダイアログはそのまま → `AIza…` をコピー)、
+取得ページをブラウザで開くかの確認(`open`。Tigerでも動きます)、そして貼り
+付け欄。貼り付けたキーは前後の空白や引用符を取り除き、形をざっと確認した
+うえで、実際に Generative Language API に投げて有効性を検証してから受け付け
+ます — 「キーが違う」「APIが未有効」「接続できない」を区別して表示します。
+成功したら `~/.claude-agent-env` に保存するか尋ねます(古い行は消してから
+書くので重複しません)。同梱の curl に届かない場合は、検証を止めるのでは
+なくスキップします。プロバイダもキーも一切設定されていない新規起動は、
+Anthropicキーのエラーではなくこの案内に入ります。Googleのブラウザ
+ログイン無しでキーを発行する方法は存在しない(そういうAPIが無い)ので、
+これは自動化ではなく「手順を案内する」ものです。
 
 ### 2026-09-10(タイプライター表示)
 
