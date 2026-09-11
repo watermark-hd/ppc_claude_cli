@@ -130,12 +130,20 @@ on purpose — whoever's using it shouldn't have to know or care which AI is ans
   conversations switch between English/Japanese/etc. automatically — no client-side
   language detection needed
 - Conversation history is always kept internally in Anthropic's Messages-API shape; when
-  `CLAUDE_PROVIDER=gemini`, it's translated to and from Gemini's `contents`/`parts` shape
+  `CLAUDE_PROVIDER=gemini` or `openai`, it's translated to and from that provider's shape
   only at the moment of the API call, so the terminal input handling and tool execution
   code don't need to know or care which provider is active
-- Typing `/claude` or `/gemini` mid-conversation switches providers on the fly — handy if
-  you want Claude's extra capability for real coding work but Gemini's free tier the rest
-  of the time (e.g. handing the machine to a kid). If that provider's key isn't in the
+- **Local / self-hosted LLMs**: `CLAUDE_PROVIDER=openai` points the agent at any
+  OpenAI-compatible `chat/completions` endpoint — a llama.cpp / Ollama / LM Studio server
+  on a faster x86 or ARM machine on your LAN, for instance. Set `OPENAI_BASE_URL`
+  (e.g. `http://192.168.1.50:8080/v1`), optionally `OPENAI_API_KEY` (most local servers
+  ignore it) and `CLAUDE_MODEL` (the model name the server expects). Plain `http://` LAN
+  endpoints work — the TLS-capable curl is only needed for the public HTTPS APIs. Note
+  that tool use (`run_shell` etc.) depends on the local model actually supporting OpenAI
+  function-calling; for plain conversation any model is fine.
+- Typing `/claude`, `/gemini` or `/openai` mid-conversation switches providers on the fly —
+  handy if you want Claude's extra capability for real coding work but Gemini's free tier the
+  rest of the time (e.g. handing the machine to a kid). If that provider's key isn't in the
   environment yet (`setup.sh` can save both up front, see below), it's prompted for right
   there, hidden like a password field — press Esc or Ctrl+C to back out instead, and
   nothing changes. Enter it once and it can optionally be saved to `~/.claude-agent-env`
@@ -328,11 +336,19 @@ Gemini固有にしていないのは、使う人がどっちのAIが答えてる
   ことで、ビルドの複雑さをOpenSSL/curlの2つだけに閉じ込めています)
 - システムプロンプトで「ユーザーが書いた言語で返答する」よう指示しているため、
   ターミナル側で言語判定をしなくても日本語/英語などが自動で切り替わります
-- 会話履歴は常にAnthropicのMessages API形式で内部保持していて、`CLAUDE_PROVIDER=gemini`の
-  時だけAPI呼び出しの直前・直後にGeminiの`contents`/`parts`形式との変換をかけています。
-  なので、ターミナル入力周りやツール実行のコードはどちらのプロバイダかを一切気にしなくて
-  済む設計です
-- 会話中に `/claude` または `/gemini` と打つと、その場でプロバイダを切り替えられます。
+- 会話履歴は常にAnthropicのMessages API形式で内部保持していて、`CLAUDE_PROVIDER` が
+  `gemini` / `openai` の時だけAPI呼び出しの直前・直後にそのプロバイダの形式との変換を
+  かけています。なので、ターミナル入力周りやツール実行のコードはどのプロバイダかを一切
+  気にしなくて済む設計です
+- **ローカル / 自前ホストのLLM**: `CLAUDE_PROVIDER=openai` にすると、OpenAI互換の
+  `chat/completions` エンドポイントなら何にでも繋げます。LAN内の速いx86/ARMマシンで
+  動かす llama.cpp / Ollama / LM Studio などが典型です。`OPENAI_BASE_URL`
+  (例: `http://192.168.1.50:8080/v1`)を設定し、必要なら `OPENAI_API_KEY`(不要な
+  サーバーが多い)と `CLAUDE_MODEL`(サーバーが期待するモデル名)も設定します。
+  LAN内の `http://` エンドポイントでも動きます — TLS対応curlが要るのは公開APIに繋ぐ
+  時だけです。ただしツール実行(`run_shell` 等)は、ローカルモデルがOpenAIの
+  function calling に対応しているかどうか次第です。単なる会話ならどのモデルでもOK。
+- 会話中に `/claude` `/gemini` `/openai` と打つと、その場でプロバイダを切り替えられます。
   普段の込み入ったコーディングにはClaude、それ以外(子供に触らせる時など)は無料のGemini、
   といった使い分けができます。切り替え先のキーが環境に無い場合は、その場でパスワード欄の
   ように画面に表示せず入力するよう促されます(`setup.sh`で最初から両方保存しておくことも

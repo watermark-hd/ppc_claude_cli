@@ -65,8 +65,19 @@ sub configure_provider {
         $API_URL = 'https://api.anthropic.com/v1/messages';
         $ANTHROPIC_VERSION = '2023-06-01';
     }
+    elsif ($provider eq 'openai') {
+        # OpenAI互換のchat/completionsエンドポイントなら何でも。想定は
+        # LAN内の速いマシンで動かすローカルLLM(llama.cpp / Ollama /
+        # LM Studio など)。$OPENAI_BASE_URL は "http://host:port/v1" の形。
+        my $base = $ENV{OPENAI_BASE_URL}
+            or die "OPENAI_BASE_URL を設定してください (例: http://192.168.1.50:8080/v1)\n";
+        $base =~ s{/+$}{};
+        $API_KEY = $ENV{OPENAI_API_KEY} || 'not-needed';  # 不要なサーバーが多い
+        $MODEL   = $ENV{CLAUDE_MODEL} || 'local-model';
+        $API_URL = "$base/chat/completions";
+    }
     else {
-        die "不明なプロバイダ: '$provider' (anthropic か gemini を指定してください)\n";
+        die "不明なプロバイダ: '$provider' (anthropic / gemini / openai を指定してください)\n";
     }
     $PROVIDER = $provider;
 }
@@ -279,7 +290,9 @@ sub call_api {
     chmod 0600, $tmp_config;
     print $cf qq(url = "$url"\n);
     print $cf qq(request = "POST"\n);
-    print $cf qq(cacert = "$CACERT"\n);
+    # cacert は TLS の時だけ必要。LAN内のローカルLLMは http:// のことが
+    # 多く、その場合 cacert ファイルが無くても問題ないので送らない。
+    print $cf qq(cacert = "$CACERT"\n) if $url =~ m{^https://}i;
     for my $h (@$headers) {
         print $cf qq(header = "$h"\n);
     }
@@ -334,6 +347,9 @@ sub build_headers {
     if ($PROVIDER eq 'gemini') {
         return [ "x-goog-api-key: $API_KEY", "content-type: application/json" ];
     }
+    if ($PROVIDER eq 'openai') {
+        return [ "authorization: Bearer $API_KEY", "content-type: application/json" ];
+    }
     return [
         "x-api-key: $API_KEY",
         "anthropic-version: $ANTHROPIC_VERSION",
@@ -343,9 +359,9 @@ sub build_headers {
 
 sub build_request {
     my ($messages, $tools, $system) = @_;
-    return $PROVIDER eq 'gemini'
-        ? build_request_gemini($messages, $tools, $system)
-        : build_request_anthropic($messages, $tools, $system);
+    return build_request_gemini($messages, $tools, $system)   if $PROVIDER eq 'gemini';
+    return build_request_openai($messages, $tools, $system)   if $PROVIDER eq 'openai';
+    return build_request_anthropic($messages, $tools, $system);
 }
 
 sub build_request_anthropic {
@@ -428,11 +444,108 @@ sub _gemini_thinking_config {
     return { thinkingBudget => $want_high ? -1 : 0 };
 }
 
+# OpenAI互換(chat/completions)。内部形式(Anthropicのcontent blocks)を
+# OpenAIのmessages配列へ変換する。system は独立フィールドではなく先頭の
+# role=system メッセージ。assistantのtool_useは tool_calls[].function に、
+# argumentsは「JSON文字列」で入れる(OpenAIの仕様)。tool_resultは
+# role=tool の独立メッセージ(tool_call_idで紐付け)。
+sub build_request_openai {
+    my ($messages, $tools, $system) = @_;
+
+    my @out = ({ role => 'system', content => $system });
+    for my $msg (@$messages) {
+        if (!ref $msg->{content}) {
+            push @out, { role => $msg->{role}, content => $msg->{content} };
+            next;
+        }
+        if ($msg->{role} eq 'assistant') {
+            my $text = '';
+            my @tool_calls;
+            for my $block (@{ $msg->{content} }) {
+                if ($block->{type} eq 'text') {
+                    $text .= $block->{text};
+                }
+                elsif ($block->{type} eq 'tool_use') {
+                    push @tool_calls, {
+                        id       => $block->{id},
+                        type     => 'function',
+                        function => {
+                            name      => $block->{name},
+                            arguments => MiniJSON::encode($block->{input} || {}),
+                        },
+                    };
+                }
+            }
+            my $m = { role => 'assistant', content => $text };
+            $m->{tool_calls} = \@tool_calls if @tool_calls;
+            push @out, $m;
+        }
+        else {
+            # user 側のブロック = run_tool の結果(tool_result)。
+            # OpenAIでは1件ずつ role=tool の独立メッセージにする。
+            for my $block (@{ $msg->{content} }) {
+                if ($block->{type} eq 'tool_result') {
+                    push @out, {
+                        role         => 'tool',
+                        tool_call_id => $block->{tool_use_id},
+                        content      => $block->{content},
+                    };
+                }
+                elsif ($block->{type} eq 'text') {
+                    push @out, { role => 'user', content => $block->{text} };
+                }
+            }
+        }
+    }
+
+    my @tool_defs = map {
+        +{ type => 'function', function => {
+            name        => $_->{name},
+            description => $_->{description},
+            parameters  => $_->{input_schema},
+        } }
+    } @$tools;
+
+    my $req = {
+        model      => $MODEL,
+        messages   => \@out,
+        max_tokens => $MAX_TOKENS,
+    };
+    $req->{tools} = \@tool_defs if @tool_defs;
+    return $req;
+}
+
 sub parse_response {
     my ($resp) = @_;
-    return $PROVIDER eq 'gemini'
-        ? parse_response_gemini($resp)
-        : parse_response_anthropic($resp);
+    return parse_response_gemini($resp)   if $PROVIDER eq 'gemini';
+    return parse_response_openai($resp)   if $PROVIDER eq 'openai';
+    return parse_response_anthropic($resp);
+}
+
+sub parse_response_openai {
+    my ($resp) = @_;
+    if ($resp->{error}) {
+        my $e = $resp->{error};
+        die "APIエラー: " . (ref $e ? MiniJSON::encode($e) : $e) . "\n";
+    }
+    my $msg = $resp->{choices} && $resp->{choices}[0] && $resp->{choices}[0]{message};
+    die "APIエラー: 応答に choices がありません: " . MiniJSON::encode($resp) . "\n" unless $msg;
+
+    my @blocks;
+    if (defined $msg->{content} && $msg->{content} ne '') {
+        push @blocks, { type => 'text', text => $msg->{content} };
+    }
+    for my $tc (@{ $msg->{tool_calls} || [] }) {
+        my $args = $tc->{function}{arguments};
+        my $input = eval { MiniJSON::decode($args) } || {};
+        push @blocks, {
+            type  => 'tool_use',
+            id    => $tc->{id} || ('call-' . scalar(@blocks)),
+            name  => $tc->{function}{name},
+            input => $input,
+        };
+    }
+    return @blocks;
 }
 
 sub parse_response_anthropic {
@@ -1530,8 +1643,14 @@ sub run_tool {
 my @messages;
 
 print "=== iBook G4 Advisor ===\n";
-print "[$PROVIDER / $MODEL]\n";
-print "こんにちは。(終了は 'exit' または Ctrl-D。AI切り替えは /claude か /gemini)\n";
+{
+    my $where = '';
+    if ($PROVIDER eq 'openai' && $API_URL =~ m{^https?://([^/]+)}) {
+        $where = " @ $1";
+    }
+    print "[$PROVIDER / $MODEL$where]\n";
+}
+print "こんにちは。(終了は 'exit' または Ctrl-D。AI切り替えは /claude /gemini /openai)\n";
 
 while (1) {
     my $input = read_line_interactive("\nご用件をどうぞ> ");
@@ -1541,14 +1660,27 @@ while (1) {
     next if $input eq '';
     last if $input eq 'exit';
 
-    if ($input eq '/claude' || $input eq '/gemini') {
-        my $target = $input eq '/claude' ? 'anthropic' : 'gemini';
+    if ($input eq '/claude' || $input eq '/gemini' || $input eq '/openai') {
+        my $target = $input eq '/claude' ? 'anthropic'
+                   : $input eq '/gemini' ? 'gemini'
+                   :                       'openai';
         if ($target eq $PROVIDER) {
             print "\nすでに [$PROVIDER / $MODEL] です。\n";
         }
+        elsif ($target eq 'openai' && !$ENV{OPENAI_BASE_URL}) {
+            # openaiは「キー」ではなく接続先URLが要る。その場で対話的に
+            # 入れてもらうより、環境変数を設定して起動し直す方が確実。
+            print "\nOpenAI互換サーバーへの切り替えには OPENAI_BASE_URL の設定が必要です。\n";
+            print "例: export OPENAI_BASE_URL=http://192.168.1.50:8080/v1\n";
+            print "(必要なら OPENAI_API_KEY と CLAUDE_MODEL も)\n";
+            print "設定してから起動し直してください。[$PROVIDER / $MODEL] のまま続けます。\n";
+        }
         else {
             eval { configure_provider($target) };
-            if ($@) {
+            if ($@ && $target eq 'openai') {
+                print "\n切り替えられませんでした: $@";
+            }
+            elsif ($@) {
                 # キーが無くて切り替えられない場合、その場で入力してもらう。
                 # EscかCtrl+Cでキャンセルすれば今までどおり元のプロバイダのまま続けられる。
                 my $key_name = $target eq 'gemini' ? 'GEMINI_API_KEY' : 'ANTHROPIC_API_KEY';

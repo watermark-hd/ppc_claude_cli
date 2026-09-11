@@ -9,6 +9,27 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-11 (OpenAI-compatible / local LLM provider)
+
+**Added:** `CLAUDE_PROVIDER=openai` — point the agent at any OpenAI-compatible
+`chat/completions` endpoint, so a PowerPC Mac can be a thin front-end to a local LLM
+(llama.cpp / Ollama / LM Studio) running on a faster machine on the LAN. Requested more
+than once on the forum thread. Config is minimal: `OPENAI_BASE_URL`
+(e.g. `http://192.168.1.50:8080/v1`), optional `OPENAI_API_KEY` (most local servers ignore
+it, defaults to a dummy), and the existing `CLAUDE_MODEL` for the model name.
+
+The internal message format stays Anthropic-shaped; `build_request_openai` /
+`parse_response_openai` translate to and from OpenAI's `messages` array only at the API
+call - system prompt as the first `system` message, assistant tool calls as `tool_calls`
+with a JSON-string `arguments`, tool results as `role: "tool"` messages keyed by
+`tool_call_id`. `call_api` now only sends `--cacert` for `https://` URLs, so plain
+`http://` LAN endpoints need no cert. `/openai` switches to it mid-conversation (it asks
+for `OPENAI_BASE_URL` via env, not an interactive key prompt); the banner shows the
+endpoint host. No runtime weight added on the PowerPC side - it's still just a curl client.
+Tool use depends on the local model supporting OpenAI function-calling; plain chat works
+with anything. Verified end to end against a mock server: basic chat and a full
+tool-call round-trip, with the exact request bodies inspected.
+
 ### 2026-09-10 (guided key setup: bilingual)
 
 **Changed:** The first-run Gemini key walkthrough was Japanese only. It's the first thing a
@@ -561,6 +582,28 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-11(OpenAI互換 / ローカルLLM プロバイダ)
+
+**追加:** `CLAUDE_PROVIDER=openai` — OpenAI互換の `chat/completions` エンドポイントなら
+何にでも繋げるようにしました。これで、PPC MacをLAN内の速いマシンで動くローカルLLM
+(llama.cpp / Ollama / LM Studio)の薄いフロントエンドとして使えます。フォーラムの
+スレッドで複数回リクエストがありました。設定は最小限: `OPENAI_BASE_URL`
+(例: `http://192.168.1.50:8080/v1`)、任意の `OPENAI_API_KEY`(不要なサーバーが多く、
+既定はダミー)、モデル名は既存の `CLAUDE_MODEL` を流用。
+
+内部のメッセージ形式はAnthropic形式のまま。`build_request_openai` /
+`parse_response_openai` がAPI呼び出しの時だけOpenAIの `messages` 配列と相互変換します
+(システムプロンプトは先頭の `system` メッセージ、assistantのツール呼び出しは
+JSON文字列の `arguments` を持つ `tool_calls`、ツール結果は `tool_call_id` で紐付ける
+`role: "tool"` メッセージ)。`call_api` は `https://` のURLの時だけ `--cacert` を
+送るようにしたので、LAN内の `http://` エンドポイントは証明書不要です。会話中に
+`/openai` で切り替え可能(キーの対話入力ではなく `OPENAI_BASE_URL` の環境変数設定を
+案内します)。バナーに接続先ホストを表示します。PPC機側の実行時の重さは増えません
+(相変わらずただのcurlクライアント)。ツール実行はローカルモデルがOpenAIの
+function calling に対応しているか次第で、単なる会話ならどのモデルでも動きます。
+モックサーバー相手に、基本の会話とツール呼び出しの1往復を、実際に送られる
+リクエスト本文まで確認済みです。
 
 ### 2026-09-10(キー取得の案内を日英併記に)
 
