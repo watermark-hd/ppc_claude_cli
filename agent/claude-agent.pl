@@ -53,13 +53,13 @@ my ($PROVIDER, $API_KEY, $MODEL, $API_URL, $ANTHROPIC_VERSION);
 sub configure_provider {
     my ($provider) = @_;
     if ($provider eq 'gemini') {
-        $ENV{GEMINI_API_KEY} or die "GEMINI_API_KEY を設定してください\n";
+        $ENV{GEMINI_API_KEY} or die "GEMINI_API_KEY is not set. / GEMINI_API_KEY を設定してください\n";
         $API_KEY = $ENV{GEMINI_API_KEY};
         $MODEL   = $ENV{CLAUDE_MODEL} || 'gemini-3.5-flash-lite';
         $API_URL = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent";
     }
     elsif ($provider eq 'anthropic') {
-        $ENV{ANTHROPIC_API_KEY} or die "ANTHROPIC_API_KEY を設定してください\n";
+        $ENV{ANTHROPIC_API_KEY} or die "ANTHROPIC_API_KEY is not set. / ANTHROPIC_API_KEY を設定してください\n";
         $API_KEY = $ENV{ANTHROPIC_API_KEY};
         $MODEL   = $ENV{CLAUDE_MODEL} || 'claude-sonnet-4-5-20250929';
         $API_URL = 'https://api.anthropic.com/v1/messages';
@@ -70,14 +70,16 @@ sub configure_provider {
         # LAN内の速いマシンで動かすローカルLLM(llama.cpp / Ollama /
         # LM Studio など)。$OPENAI_BASE_URL は "http://host:port/v1" の形。
         my $base = $ENV{OPENAI_BASE_URL}
-            or die "OPENAI_BASE_URL を設定してください (例: http://192.168.1.50:8080/v1)\n";
+            or die "OPENAI_BASE_URL is not set (e.g. http://192.168.1.50:8080/v1).\n"
+                 . "OPENAI_BASE_URL を設定してください(例: http://192.168.1.50:8080/v1)\n";
         $base =~ s{/+$}{};
         $API_KEY = $ENV{OPENAI_API_KEY} || 'not-needed';  # 不要なサーバーが多い
         $MODEL   = $ENV{CLAUDE_MODEL} || 'local-model';
         $API_URL = "$base/chat/completions";
     }
     else {
-        die "不明なプロバイダ: '$provider' (anthropic / gemini / openai を指定してください)\n";
+        die "Unknown provider '$provider' (use anthropic / gemini / openai).\n"
+          . "不明なプロバイダ: '$provider'(anthropic / gemini / openai を指定してください)\n";
     }
     $PROVIDER = $provider;
 }
@@ -89,7 +91,7 @@ if (!defined $_want_provider || $_want_provider eq '') {
     $_want_provider = $ENV{ANTHROPIC_API_KEY} ? 'anthropic' : 'gemini';
 }
 unless (eval { configure_provider($_want_provider); 1 }) {
-    my $err = $@ || "設定エラー\n";
+    my $err = $@ || "Configuration error / 設定エラー\n";
     # Geminiのキーが無いまま起動された時だけ、取得を手順付きで案内する。
     # それ以外(Anthropicキー未設定、不明なプロバイダ等)は従来通りdie。
     if ($_want_provider eq 'gemini' && !$ENV{GEMINI_API_KEY}) {
@@ -526,10 +528,10 @@ sub parse_response_openai {
     my ($resp) = @_;
     if ($resp->{error}) {
         my $e = $resp->{error};
-        die "APIエラー: " . (ref $e ? MiniJSON::encode($e) : $e) . "\n";
+        die "API error / APIエラー: " . (ref $e ? MiniJSON::encode($e) : $e) . "\n";
     }
     my $msg = $resp->{choices} && $resp->{choices}[0] && $resp->{choices}[0]{message};
-    die "APIエラー: 応答に choices がありません: " . MiniJSON::encode($resp) . "\n" unless $msg;
+    die "API error: no choices in response / 応答に choices がありません: " . MiniJSON::encode($resp) . "\n" unless $msg;
 
     my @blocks;
     if (defined $msg->{content} && $msg->{content} ne '') {
@@ -551,7 +553,7 @@ sub parse_response_openai {
 sub parse_response_anthropic {
     my ($resp) = @_;
     if ($resp->{type} && $resp->{type} eq 'error') {
-        die "APIエラー: " . MiniJSON::encode($resp) . "\n";
+        die "API error / APIエラー: " . MiniJSON::encode($resp) . "\n";
     }
     return @{ $resp->{content} || [] };
 }
@@ -561,7 +563,7 @@ my $gemini_call_seq = 0;
 sub parse_response_gemini {
     my ($resp) = @_;
     if ($resp->{error}) {
-        die "APIエラー: " . MiniJSON::encode($resp->{error}) . "\n";
+        die "API error / APIエラー: " . MiniJSON::encode($resp->{error}) . "\n";
     }
     my $candidate = $resp->{candidates} && $resp->{candidates}[0];
     my @blocks;
@@ -646,7 +648,7 @@ my @TOOLS = (
 
 sub confirm {
     my ($msg) = @_;
-    print "\n[確認] $msg\n実行しますか? [y/N] ";
+    print "\n[Confirm / 確認] $msg\nProceed? / 実行しますか? [y/N] ";
     my $ans = read_line_interactive('', 0);
     return defined($ans) && $ans =~ /^y/i;
 }
@@ -1599,9 +1601,14 @@ sub read_secret_or_cancel {
 sub run_tool {
     my ($name, $input) = @_;
 
+    # run_toolの戻り値はユーザーに直接表示されるのではなく、モデルへの
+    # tool_resultとして送り返される内容(=モデルが読むログ)。人間が直接
+    # 目にするのはconfirm()の確認プロンプトの方なので、そちらだけ日英
+    # 併記にし、こちらは英語で統一する(システムプロンプトで、返信は
+    # ユーザーの言語に合わせるよう既に指示してある)。
     if ($name eq 'read_file') {
         my $path = $input->{path};
-        open(my $fh, '<:encoding(UTF-8)', $path) or return "エラー: $path を開けません: $!";
+        open(my $fh, '<:encoding(UTF-8)', $path) or return "Error: cannot open $path: $!";
         local $/;
         my $content = <$fh>;
         close $fh;
@@ -1609,31 +1616,31 @@ sub run_tool {
     }
     elsif ($name eq 'write_file') {
         my $path = $input->{path};
-        unless (confirm("ファイル '$path' に書き込みます")) {
-            return "ユーザーが書き込みをキャンセルしました";
+        unless (confirm("Write to file '$path'? / ファイル '$path' に書き込みます")) {
+            return "Cancelled by user.";
         }
-        open(my $fh, '>:encoding(UTF-8)', $path) or return "エラー: $path に書き込めません: $!";
+        open(my $fh, '>:encoding(UTF-8)', $path) or return "Error: cannot write $path: $!";
         print $fh $input->{content};
         close $fh;
-        return "書き込み完了: $path";
+        return "Write complete: $path";
     }
     elsif ($name eq 'list_dir') {
         my $path = $input->{path} || '.';
-        opendir(my $dh, $path) or return "エラー: $path を開けません: $!";
+        opendir(my $dh, $path) or return "Error: cannot open $path: $!";
         my @entries = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
         closedir $dh;
         return join("\n", @entries);
     }
     elsif ($name eq 'run_shell') {
         my $command = $input->{command};
-        unless (confirm("コマンドを実行します: $command")) {
-            return "ユーザーが実行をキャンセルしました";
+        unless (confirm("Run this command: $command / コマンドを実行します: $command")) {
+            return "Cancelled by user.";
         }
         my $output = `$command 2>&1`;
-        return $output eq '' ? '(出力なし)' : $output;
+        return $output eq '' ? '(no output)' : $output;
     }
     else {
-        return "不明なツール: $name";
+        return "Unknown tool: $name";
     }
 }
 
@@ -1650,10 +1657,11 @@ print "=== iBook G4 Advisor ===\n";
     }
     print "[$PROVIDER / $MODEL$where]\n";
 }
+print "Hello. (Type 'exit' or Ctrl-D to quit. Switch AI with /claude /gemini /openai)\n";
 print "こんにちは。(終了は 'exit' または Ctrl-D。AI切り替えは /claude /gemini /openai)\n";
 
 while (1) {
-    my $input = read_line_interactive("\nご用件をどうぞ> ");
+    my $input = read_line_interactive("\nWhat can I help with? / ご用件をどうぞ> ");
     last unless defined $input;
     # 行全体(生バイト)が揃ってから、まとめてUTF-8デコードする
     $input = decode('UTF-8', $input, FB_DEFAULT);
@@ -1665,12 +1673,16 @@ while (1) {
                    : $input eq '/gemini' ? 'gemini'
                    :                       'openai';
         if ($target eq $PROVIDER) {
-            print "\nすでに [$PROVIDER / $MODEL] です。\n";
+            print "\nAlready on [$PROVIDER / $MODEL]. / すでに [$PROVIDER / $MODEL] です。\n";
         }
         elsif ($target eq 'openai' && !$ENV{OPENAI_BASE_URL}) {
             # openaiは「キー」ではなく接続先URLが要る。その場で対話的に
             # 入れてもらうより、環境変数を設定して起動し直す方が確実。
-            print "\nOpenAI互換サーバーへの切り替えには OPENAI_BASE_URL の設定が必要です。\n";
+            print "\nSwitching to an OpenAI-compatible server needs OPENAI_BASE_URL set.\n";
+            print "e.g. export OPENAI_BASE_URL=http://192.168.1.50:8080/v1\n";
+            print "(also OPENAI_API_KEY and CLAUDE_MODEL if needed)\n";
+            print "Set it and restart. Staying on [$PROVIDER / $MODEL] for now.\n";
+            print "OpenAI互換サーバーへの切り替えには OPENAI_BASE_URL の設定が必要です。\n";
             print "例: export OPENAI_BASE_URL=http://192.168.1.50:8080/v1\n";
             print "(必要なら OPENAI_API_KEY と CLAUDE_MODEL も)\n";
             print "設定してから起動し直してください。[$PROVIDER / $MODEL] のまま続けます。\n";
@@ -1678,40 +1690,44 @@ while (1) {
         else {
             eval { configure_provider($target) };
             if ($@ && $target eq 'openai') {
-                print "\n切り替えられませんでした: $@";
+                print "\nCould not switch: $@";
             }
             elsif ($@) {
                 # キーが無くて切り替えられない場合、その場で入力してもらう。
                 # EscかCtrl+Cでキャンセルすれば今までどおり元のプロバイダのまま続けられる。
                 my $key_name = $target eq 'gemini' ? 'GEMINI_API_KEY' : 'ANTHROPIC_API_KEY';
-                my $key = read_secret_or_cancel("\n$key_name がまだ設定されていません。入力してください(Escまたは Ctrl+Cでキャンセル)\n> ");
+                my $key = read_secret_or_cancel(
+                    "\n$key_name is not set yet. Please enter it (Esc or Ctrl+C to cancel)\n"
+                  . "$key_name がまだ設定されていません。入力してください(Escまたは Ctrl+Cでキャンセル)\n> ");
                 if (!defined $key || $key eq '') {
-                    print "\nキャンセルしました。[$PROVIDER / $MODEL] のままです。\n";
+                    print "\nCancelled. Staying on [$PROVIDER / $MODEL]. / キャンセルしました。[$PROVIDER / $MODEL] のままです。\n";
                 }
                 else {
                     $ENV{$key_name} = $key;
                     eval { configure_provider($target) };
                     if ($@) {
-                        print "\nそれでも切り替えられませんでした: $@";
+                        print "\nStill could not switch: $@";
                     }
                     else {
-                        print "\n[$PROVIDER / $MODEL] に切り替えました。ここまでの会話はそのまま引き継がれます。\n";
-                        if (confirm("このキーを $ENV_FILE_PATH に保存して、次回から入力せずに使えるようにしますか")) {
+                        print "\nSwitched to [$PROVIDER / $MODEL]. The conversation so far carries over.\n";
+                        print "[$PROVIDER / $MODEL] に切り替えました。ここまでの会話はそのまま引き継がれます。\n";
+                        if (confirm("Save this key to $ENV_FILE_PATH so you don't need to enter it again? / このキーを $ENV_FILE_PATH に保存して、次回から入力せずに使えるようにしますか")) {
                             if (open(my $ef, '>>', $ENV_FILE_PATH)) {
                                 print $ef "export $key_name=$key\n";
                                 close $ef;
                                 chmod 0600, $ENV_FILE_PATH;
-                                print "保存しました。\n";
+                                print "Saved. / 保存しました。\n";
                             }
                             else {
-                                print "保存に失敗しました($ENV_FILE_PATH に書き込めません)。\n";
+                                print "Could not save (cannot write $ENV_FILE_PATH). / 保存に失敗しました($ENV_FILE_PATH に書き込めません)。\n";
                             }
                         }
                     }
                 }
             }
             else {
-                print "\n[$PROVIDER / $MODEL] に切り替えました。ここまでの会話はそのまま引き継がれます。\n";
+                print "\nSwitched to [$PROVIDER / $MODEL]. The conversation so far carries over.\n";
+                print "[$PROVIDER / $MODEL] に切り替えました。ここまでの会話はそのまま引き継がれます。\n";
             }
         }
         next;
@@ -1757,4 +1773,4 @@ while (1) {
     }
 }
 
-print "\nさようなら。\n";
+print "\nGoodbye. / さようなら。\n";

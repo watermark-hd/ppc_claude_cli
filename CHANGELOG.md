@@ -9,6 +9,26 @@ This file is not just a technical log — it's also where I want to say thanks t
 whoever actually ran this thing on real hardware and noticed something was off.
 If that's you, thank you.
 
+### 2026-09-11 (bilingual UI)
+
+**Changed:** About 70% of downloads turn out to be from outside Japan, but the running
+agent's own text — the banner, the prompt, confirmation dialogs, provider-switch messages,
+API-key error messages — was Japanese only (the first-run Gemini key walkthrough had already
+been made bilingual earlier; everything else hadn't). Went through the whole interactive
+surface and made every string a user actually reads print English first, then Japanese, the
+same pattern already used for the key walkthrough: the banner and prompt, `y/N` confirmations
+(and the messages they guard, like "write to this file?"), the `/claude` `/gemini` `/openai`
+switch messages, the API-key-missing errors for all three providers, and the goodbye line.
+Tool-result text that only the model reads (not the human) was left in plain English instead,
+since the system prompt already tells the model to reply in whatever language the user wrote
+in regardless of what language its own tool output comes back in. No behavior changes, pure
+text. Confirmed live and reran the full regression suite. Deployed to all three machines.
+
+Also confirmed fixed on real hardware: the IME-commit-as-submit issue from two days ago
+(pausing mid-sentence on a conversion candidate causing the line to submit early) — a
+PowerBook G4 test with several 5-second pauses produced no stray submits and no stray
+characters.
+
 ### 2026-09-11 (OpenAI-compatible / local LLM provider)
 
 **Added:** `CLAUDE_PROVIDER=openai` — point the agent at any OpenAI-compatible
@@ -582,6 +602,25 @@ and full-width characters so Japanese input edits correctly too.
 このファイルは技術的な変更履歴であると同時に、実際に手元のマシンで動かして
 何かおかしいと気づいて教えてくれた方への感謝を書いておく場所でもあります。
 使ってくれて、気づいてくれて、ありがとうございます。
+
+### 2026-09-11(UIを日英併記に)
+
+**変更:** ダウンロードの約7割が海外からだと分かったのですが、動いているagent自身の
+表示 — バナー・プロンプト・確認ダイアログ・プロバイダ切り替えのメッセージ・APIキー
+関連のエラー — は日本語だけでした(初回起動時のGeminiキー取得案内は既に日英併記に
+していましたが、それ以外は手つかずでした)。対話中に人間が実際に読む文字列を
+全部洗い出して、キー取得案内と同じパターン(英語→日本語の順)で出すようにしました:
+バナーとプロンプト、`y/N`の確認(「このファイルに書き込みますか?」のような、確認
+対象のメッセージ自体も含む)、`/claude` `/gemini` `/openai` の切り替えメッセージ、
+3プロバイダ分のAPIキー未設定エラー、終了時の挨拶。モデルだけが読むツール実行結果の
+テキストは英語のみのままにしました — システムプロンプトで「ツールの出力の言語に
+関係なく、ユーザーが使った言語で返信する」と既に指示してあるためです。挙動の変更は
+無く、文字列だけの変更です。実際に動かして確認し、既存の回帰テスト一式も再実行して
+通ることを確認しました。3台に配布済みです。
+
+あわせて、2日前のIME確定→勝手に送信される問題も**実機で修正を確認**できました。
+PowerBook G4で、変換候補を選ぶ間に5秒ほど間を置く操作を何度か試しても、勝手な
+送信や余分な文字は一切出ませんでした。
 
 ### 2026-09-11(OpenAI互換 / ローカルLLM プロバイダ)
 
