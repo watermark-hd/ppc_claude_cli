@@ -13,7 +13,7 @@ curl** — either Anthropic (Claude) or, as of the latest version, Google's Gemi
 which has a free tier that needs no credit card at all.
 
 **Discussion & support:** [MacRumors PowerPC forum thread](https://forums.macrumors.com/threads/i-got-claude-ai-running-natively-on-a-powerpc-ibook-g4-tiger.2487484/)
-· **Downloads:** [Releases](https://github.com/watermark-hd/ppc_claude_cli/releases)
+· **Downloads:** [Releases](https://github.com/watermark-hd/ppc_claude_cli/releases) (not the green "Code" button above, which only has the source)
 
 ### Tested environment
 
@@ -224,7 +224,7 @@ community that keeps old machines alive and useful.
 Anthropic (Claude) か、最新版で対応したGoogleのGemini API(クレジットカード不要の無料枠あり)から選べます。
 
 **議論・サポート:** [MacRumors PowerPC板のスレッド](https://forums.macrumors.com/threads/i-got-claude-ai-running-natively-on-a-powerpc-ibook-g4-tiger.2487484/)
-・**ダウンロード:** [Releases](https://github.com/watermark-hd/ppc_claude_cli/releases)
+・**ダウンロード:** [Releases](https://github.com/watermark-hd/ppc_claude_cli/releases)（上部の緑の「Code」ボタンはソースコードのみなので、そちらではありません）
 
 ### 動作確認環境
 
